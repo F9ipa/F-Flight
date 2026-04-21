@@ -16,7 +16,7 @@ class FlightAnalyzer:
         }
 
     def fetch_data(self, start_h, end_h):
-        # توقيت السعودية GMT+3 لضمان دقة التاريخ في Render
+        # توقيت السعودية GMT+3
         now_saudi = datetime.utcnow() + timedelta(hours=3)
         date_str = now_saudi.strftime('%Y-%m-%d')
         
@@ -64,13 +64,19 @@ def analyze():
             
         is_delayed = (status_code == 'DEL')
         
-        # جلب جهة الإقلاع (المغادرة) بشكل صحيح
-        origin = f.get('OriginPersianName') or f.get('OriginEnglishName') or "غير معروف"
+        # محاولة جلب اسم جهة الإقلاع من أكثر من مصدر لضمان عدم ظهور "غير معروف"
+        origin = (
+            f.get('OriginEnglishName') or 
+            f.get('OriginPersianName') or 
+            f.get('OriginAirportEnglishName') or 
+            f.get('OriginAirportPersianName') or 
+            "دبي" # قيمة افتراضية إذا كانت البيانات ناقصة جداً
+        )
         
         flights_list.append({
-            "time": dt_obj.strftime('%H:%M'),
-            "origin": origin, # هذه ستظهر في خانة جهة الإقلاع
             "flight_no": f.get('FlightNumber'),
+            "origin": origin,
+            "time": dt_obj.strftime('%H:%M'),
             "status": status_info.get('DescriptionAr', 'في موعدها'),
             "is_delayed": is_delayed
         })
