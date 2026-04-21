@@ -3,32 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>محلل الرحلات</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: sans-serif; margin: 0; padding: 15px; }
         .header-bar { background: #161b22; padding: 15px; border-radius: 8px; display: flex; justify-content: center; gap: 10px; align-items: center; margin-bottom: 20px; border: 1px solid #30363d; }
         input { background: #000; color: #fff; border: 1px solid #30363d; padding: 5px; border-radius: 4px; }
         button { background: #238636; color: white; border: none; padding: 8px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; }
-        
-        /* ترتيب التبويبات الجديد */
         .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
         .tab { flex: 1; padding: 12px; text-align: center; background: #21262d; border-radius: 6px; cursor: pointer; color: #8b949e; border: 1px solid #30363d; }
         .tab.active { background: #2f81f7; color: white; border-color: #58a6ff; }
-
         .content { display: none; }
         .content.active { display: block; }
-
         table { width: 100%; border-collapse: collapse; }
         th { color: #58a6ff; border-bottom: 1px solid #30363d; padding: 12px; text-align: right; }
         td { padding: 12px; border-bottom: 1px solid #21262d; }
         .delayed { color: #ff7b72; font-weight: bold; }
-
         .peak-box { border: 2px solid #f0883e; border-radius: 12px; padding: 25px; text-align: center; margin-top: 10px; }
         .gap-item { background: #161b22; padding: 12px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; }
     </style>
 </head>
 <body>
-
     <div class="header-bar">
         من: <input type="time" id="start" value="01:00"> 
         إلى: <input type="time" id="end" value="23:59">
@@ -44,9 +37,9 @@
         <table>
             <thead>
                 <tr>
-                    <th>الوقت المتوقع</th>
-                    <th>جهة الإقلاع</th>
                     <th>الرحلة</th>
+                    <th>جهة الإقلاع</th>
+                    <th>الوقت</th>
                     <th>الحالة</th>
                 </tr>
             </thead>
@@ -82,9 +75,9 @@
             
             document.getElementById('rows').innerHTML = data.flights.map(f => `
                 <tr class="${f.is_delayed ? 'delayed' : ''}">
-                    <td>${f.time}</td>
-                    <td>${f.origin}</td>
                     <td>${f.flight_no}</td>
+                    <td>${f.origin}</td>
+                    <td>${f.time}</td>
                     <td>${f.status}</td>
                 </tr>`).join('');
 
@@ -93,7 +86,6 @@
                 document.getElementById('pCount').innerText = "عدد الرحلات: " + data.peak.count;
             } else {
                 document.getElementById('pTime').innerText = "لا توجد ذروة";
-                document.getElementById('pCount').innerText = "";
             }
 
             document.getElementById('gaps').innerHTML = data.gaps.map(g => `
