@@ -1,1 +1,238 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>محلل الرحلات - مطار الملك عبدالعزيز</title>
+    <style>
+        /* تصميم الوضع المظلم Dark Mode */
+        body { 
+            background-color: #0d1117; 
+            color: #c9d1d9; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 15px; 
+        }
 
+        /* شريط المدخلات العلوي */
+        .header-bar { 
+            background: #161b22; 
+            padding: 15px; 
+            border-radius: 8px; 
+            display: flex; 
+            justify-content: center; 
+            gap: 15px; 
+            align-items: center; 
+            margin-bottom: 20px;
+            border: 1px solid #30363d;
+        }
+
+        input[type="time"] { 
+            background: #000; 
+            color: #fff; 
+            border: 1px solid #30363d; 
+            padding: 8px; 
+            border-radius: 6px; 
+        }
+
+        button#updateBtn { 
+            background: #238636; 
+            color: white; 
+            border: none; 
+            padding: 8px 25px; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-weight: bold;
+        }
+
+        /* نظام التبويبات Tabs */
+        .tabs { 
+            display: flex; 
+            gap: 10px; 
+            margin-bottom: 20px; 
+        }
+
+        .tab { 
+            flex: 1; 
+            padding: 12px; 
+            text-align: center; 
+            background: #21262d; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            color: #8b949e; 
+            border: 1px solid #30363d; 
+            transition: 0.3s;
+        }
+
+        .tab.active { 
+            background: #2f81f7; 
+            color: white; 
+            border-color: #58a6ff; 
+        }
+
+        /* المحتوى */
+        .content { display: none; }
+        .content.active { display: block; }
+
+        /* الجدول */
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th { color: #58a6ff; border-bottom: 1px solid #30363d; padding: 12px; text-align: right; }
+        td { padding: 12px; border-bottom: 1px solid #21262d; font-size: 0.95em; }
+        
+        /* لون الرحلة المتأخرة */
+        .delayed-row { color: #ff7b72 !important; font-weight: bold; }
+        .status-tag { font-size: 0.8em; opacity: 0.8; display: block; margin-top: 4px; }
+
+        /* قسم الذروة */
+        .peak-container { 
+            border: 2px solid #f0883e; 
+            border-radius: 12px; 
+            padding: 30px; 
+            text-align: center; 
+            margin-top: 10px;
+            background: rgba(240, 136, 62, 0.05);
+        }
+
+        .peak-title { color: #8b949e; margin-bottom: 10px; font-size: 1.1em; }
+        .peak-time { font-size: 2em; margin: 0; color: #fff; }
+
+        /* قسم الفجوات */
+        .gaps-title { color: #58a6ff; margin-top: 35px; display: flex; align-items: center; gap: 8px; }
+        .gap-item { 
+            background: #161b22;
+            padding: 15px; 
+            border-bottom: 1px solid #30363d; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+        }
+        .gap-time-range { color: #58a6ff; font-weight: 500; }
+        .gap-duration { color: #c9d1d9; font-size: 0.9em; }
+
+    </style>
+</head>
+<body>
+
+    <div class="header-bar">
+        <span>من:</span> <input type="time" id="startTime" value="01:00"> 
+        <span>إلى:</span> <input type="time" id="endTime" value="23:59">
+        <button id="updateBtn" onclick="updateData()">تحديث</button>
+    </div>
+
+    <div class="tabs">
+        <div class="tab" onclick="showTab(event, 'analysis')">تحليل الاحتياج</div>
+        <div class="tab active" onclick="showTab(event, 'peakSection')">الذروة والفجوات</div>
+        <div class="tab" onclick="showTab(event, 'arrivalsTable')">رحلات الوصول</div>
+    </div>
+
+    <div id="arrivalsTable" class="content">
+        <table>
+            <thead>
+                <tr>
+                    <th>الوقت المتوقع</th>
+                    <th>الخطوط</th>
+                    <th>الرحلة</th>
+                    <th>المصدر / الحالة</th>
+                </tr>
+            </thead>
+            <tbody id="flightRows">
+                </tbody>
+        </table>
+    </div>
+
+    <div id="peakSection" class="content active">
+        <div class="peak-container">
+            <div class="peak-title">وقت الذروة المتوقع</div>
+            <h1 class="peak-time" id="peakDisplay">-</h1>
+            <div id="peakSubText" style="margin-top:10px; color:#8b949e"></div>
+        </div>
+
+        <h3 class="gaps-title">⌛ الفجوات التشغيلية (> 15 دقيقة):</h3>
+        <div id="gapsContainer">
+            </div>
+    </div>
+
+    <div id="analysis" class="content">
+        <p style="text-align: center; color: #8b949e; margin-top: 50px;">سيتم عرض تحليل الاحتياج هنا...</p>
+    </div>
+
+    <script>
+        // التبديل بين الأقسام
+        function showTab(evt, tabId) {
+            let contents = document.getElementsByClassName("content");
+            for (let i = 0; i < contents.length; i++) contents[i].classList.remove("active");
+
+            let tabs = document.getElementsByClassName("tab");
+            for (let i = 0; i < tabs.length; i++) tabs[i].classList.remove("active");
+
+            document.getElementById(tabId).classList.add("active");
+            evt.currentTarget.classList.add("active");
+        }
+
+        // جلب البيانات من السيرفر
+        async function updateData() {
+            const start = document.getElementById('startTime').value;
+            const end = document.getElementById('endTime').value;
+            const btn = document.getElementById('updateBtn');
+
+            btn.innerText = "جاري التحديث...";
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({start: start, end: end})
+                });
+                
+                const data = await response.json();
+
+                // 1. تحديث جدول الرحلات
+                const flightRows = document.getElementById('flightRows');
+                flightRows.innerHTML = data.flights.map(f => `
+                    <tr class="${f.is_delayed ? 'delayed-row' : ''}">
+                        <td>${f.time}</td>
+                        <td>${f.airline}</td>
+                        <td>${f.flight_no}</td>
+                        <td>
+                            ${f.origin}
+                            <span class="status-tag">${f.status}</span>
+                        </td>
+                    </tr>
+                `).join('');
+
+                // 2. تحديث قسم الذروة
+                if(data.peak) {
+                    document.getElementById('peakDisplay').innerText = data.peak.time;
+                    document.getElementById('peakSubText').innerText = "إجمالي عدد رحلات هذه الساعة: " + data.peak.count;
+                } else {
+                    document.getElementById('peakDisplay').innerText = "لا توجد ذروة";
+                    document.getElementById('peakSubText').innerText = "";
+                }
+
+                // 3. تحديث قسم الفجوات
+                const gapsContainer = document.getElementById('gapsContainer');
+                if(data.gaps.length > 0) {
+                    gapsContainer.innerHTML = data.gaps.map(g => `
+                        <div class="gap-item">
+                            <span class="gap-time-range">${g.from} ← ${g.to}</span>
+                            <span class="gap-duration">${g.duration} دقيقة</span>
+                        </div>
+                    `).join('');
+                } else {
+                    gapsContainer.innerHTML = '<p style="padding:15px; color:#8b949e">لا توجد فجوات كبيرة حالياً.</p>';
+                }
+
+            } catch (error) {
+                alert("حدث خطأ أثناء جلب البيانات. تأكد من تشغيل ملف البايثون.");
+            } finally {
+                btn.innerText = "تحديث";
+                btn.disabled = false;
+            }
+        }
+
+        // تحديث البيانات عند تشغيل الصفحة فوراً
+        window.onload = updateData;
+    </script>
+</body>
+</html>
