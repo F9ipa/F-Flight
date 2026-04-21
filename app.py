@@ -8,7 +8,6 @@ app = Flask(__name__)
 
 class FlightAnalyzer:
     def __init__(self):
-        # الرابط والتوثيق الرسمي من مطار الملك عبدالعزيز
         self.url = "https://www.kaia.sa/ext-api/flightsearch/flights"
         self.headers = {
             "Accept": "application/json",
@@ -17,11 +16,10 @@ class FlightAnalyzer:
         }
 
     def fetch_data(self, start_h, end_h):
-        # توقيت مكة المكرمة (GMT+3) لأن سيرفرات Render تعمل بتوقيت مختلف
+        # توقيت السعودية GMT+3 لضمان دقة التاريخ في Render
         now_saudi = datetime.utcnow() + timedelta(hours=3)
         date_str = now_saudi.strftime('%Y-%m-%d')
         
-        # تنسيق الوقت لفلتر الـ API
         iso_start = f"{date_str}T{start_h}:00.000+03:00"
         iso_end = f"{date_str}T{end_h}:00.000+03:00"
 
@@ -33,10 +31,8 @@ class FlightAnalyzer:
         
         try:
             response = requests.get(self.url, params=params, headers=self.headers, timeout=15)
-            response.raise_for_status()
             return response.json().get('value', [])
-        except Exception as e:
-            print(f"Fetch Error: {e}")
+        except:
             return []
 
 @app.route('/')
@@ -60,7 +56,6 @@ def analyze():
         status_info = f.get('PublicRemark', {})
         status_code = (status_info.get('Code') or '').upper()
         
-        # معالجة الوقت من الصيغة القادمة من الـ API
         try:
             raw_time = f.get('EarlyOrDelayedDateTime').split('+')[0]
             dt_obj = datetime.fromisoformat(raw_time)
@@ -69,22 +64,21 @@ def analyze():
             
         is_delayed = (status_code == 'DEL')
         
-        # إضافة بيانات الرحلة للجدول
+        # جلب جهة الإقلاع (المغادرة) بشكل صحيح
+        origin = f.get('OriginPersianName') or f.get('OriginEnglishName') or "غير معروف"
+        
         flights_list.append({
             "time": dt_obj.strftime('%H:%M'),
-            "airline": f.get('AirlinePersianName') or f.get('AirlineEnglishName'),
+            "origin": origin, # هذه ستظهر في خانة جهة الإقلاع
             "flight_no": f.get('FlightNumber'),
-            "origin": f.get('OriginPersianName') or f.get('OriginEnglishName'),
-            "status": status_info.get('DescriptionAr', 'غير محدد'),
+            "status": status_info.get('DescriptionAr', 'في موعدها'),
             "is_delayed": is_delayed
         })
 
-        # استبعاد الرحلات التي هبطت بالفعل من حساب "الذروة القادمة" و "الفجوات"
         if status_code not in ['ARR', 'DLV', 'LND']:
             flight_times.append(dt_obj)
             hourly_stats[dt_obj.hour] += 1
 
-    # حساب وقت الذروة
     peak_data = None
     if hourly_stats:
         peak_hour = max(hourly_stats, key=hourly_stats.get)
@@ -93,7 +87,6 @@ def analyze():
             "count": hourly_stats[peak_hour]
         }
 
-    # حساب الفجوات الزمنية التي تزيد عن 15 دقيقة
     gaps_list = []
     flight_times.sort()
     for i in range(len(flight_times) - 1):
@@ -105,13 +98,8 @@ def analyze():
                 "duration": int(diff)
             })
 
-    return jsonify({
-        "flights": flights_list,
-        "peak": peak_data,
-        "gaps": gaps_list
-    })
+    return jsonify({"flights": flights_list, "peak": peak_data, "gaps": gaps_list})
 
 if __name__ == '__main__':
-    # منفذ التشغيل الخاص بـ Render
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
