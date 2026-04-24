@@ -1,6 +1,6 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import Counter
 import os
 
@@ -15,97 +15,76 @@ class FlightAnalyzer:
             "User-Agent": "Mozilla/5.0"
         }
 
-    def fetch_data(self, start_h, end_h):
-        # توقيت السعودية GMT+3
-        now_saudi = datetime.utcnow() + timedelta(hours=3)
-        date_str = now_saudi.strftime('%Y-%m-%d')
-        
-        iso_start = f"{date_str}T{start_h}:00.000+03:00"
-        iso_end = f"{date_str}T{end_h}:00.000+03:00"
-
-        params = {
-            "$filter": f"(EarlyOrDelayedDateTime ge {iso_start} and EarlyOrDelayedDateTime lt {iso_end}) and PublicRemark/Code ne 'NOP' and tolower(FlightNature) eq 'arrival' and Terminal eq 'T1' and (tolower(InternationalStatus) eq 'international')",
-            "$orderby": "EarlyOrDelayedDateTime",
-            "$count": "true"
-        }
-        
+    def fetch_and_analyze(self, day, start_h, end_h):
+        now = datetime.now()
         try:
-            response = requests.get(self.url, params=params, headers=self.headers, timeout=15)
-            return response.json().get('value', [])
-        except:
-            return []
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/analyze', methods=['POST'])
-def analyze():
-    req_data = request.json
-    start_h = req_data.get('start', '01:00')
-    end_h = req_data.get('end', '23:59')
-    
-    analyzer = FlightAnalyzer()
-    raw_data = analyzer.fetch_data(start_h, end_h)
-    
-    flights_list = []
-    flight_times = []
-    hourly_stats = Counter()
-
-    for f in raw_data:
-        status_info = f.get('PublicRemark', {})
-        status_code = (status_info.get('Code') or '').upper()
-        
-        try:
-            raw_time = f.get('EarlyOrDelayedDateTime').split('+')[0]
-            dt_obj = datetime.fromisoformat(raw_time)
-        except:
-            continue
+            target_date = datetime(now.year, now.month, int(day))
+            date_str = target_date.strftime('%Y-%m-%d')
+            iso_start = f"{date_str}T{start_h}:00.000+03:00"
+            iso_end = f"{date_str}T{end_h}:00.000+03:00"
+            limit_end_dt = datetime.fromisoformat(f"{date_str}T{end_h}")
             
-        is_delayed = (status_code == 'DEL')
-        
-        # محاولة جلب اسم جهة الإقلاع من أكثر من مصدر لضمان عدم ظهور "غير معروف"
-        origin = (
-            f.get('OriginEnglishName') or 
-            f.get('OriginPersianName') or 
-            f.get('OriginAirportEnglishName') or 
-            f.get('OriginAirportPersianName') or 
-            "دبي" # قيمة افتراضية إذا كانت البيانات ناقصة جداً
-        )
-        
-        flights_list.append({
-            "flight_no": f.get('FlightNumber'),
-            "origin": origin,
-            "time": dt_obj.strftime('%H:%M'),
-            "status": status_info.get('DescriptionAr', 'في موعدها'),
-            "is_delayed": is_delayed
-        })
+            params = {
+                "$filter": f"(EarlyOrDelayedDateTime ge {iso_start} and EarlyOrDelayedDateTime lt {iso_end}) and PublicRemark/Code ne 'NOP' and tolower(FlightNature) eq 'arrival' and Terminal eq 'T1' and (tolower(InternationalStatus) eq 'international')",
+                "$orderby": "EarlyOrDelayedDateTime",
+                "$count": "true"
+            }
+            
+            response = requests.get(self.url, params=params, headers=self.headers, timeout=10)
+            data = response.json().get('value', [])
+            
+            if not data: return None
 
-        if status_code not in ['ARR', 'DLV', 'LND']:
-            flight_times.append(dt_obj)
-            hourly_stats[dt_obj.hour] += 1
+            total_received = len(data)
+            flight_times = []
+            delayed_count = 0
+            hourly_stats = Counter()
 
-    peak_data = None
-    if hourly_stats:
-        peak_hour = max(hourly_stats, key=hourly_stats.get)
-        peak_data = {
-            "time": f"{peak_hour:02d}:00 - {peak_hour+1:02d}:00",
-            "count": hourly_stats[peak_hour]
-        }
+            for f in data:
+                status_code = f.get('PublicRemark', {}).get('Code', '').upper()
+                if status_code in ['ARR', 'DLV', 'LND']: continue
 
-    gaps_list = []
-    flight_times.sort()
-    for i in range(len(flight_times) - 1):
-        diff = (flight_times[i+1] - flight_times[i]).total_seconds() / 60
-        if diff > 15:
-            gaps_list.append({
-                "from": flight_times[i].strftime('%H:%M'),
-                "to": flight_times[i+1].strftime('%H:%M'),
-                "duration": int(diff)
-            })
+                dt_raw = f.get('EarlyOrDelayedDateTime').split('+')[0]
+                dt_obj = datetime.fromisoformat(dt_raw)
+                if dt_obj >= limit_end_dt: continue
 
-    return jsonify({"flights": flights_list, "peak": peak_data, "gaps": gaps_list})
+                flight_times.append(dt_obj)
+                hourly_stats[dt_obj.hour] += 1
+                if status_code == 'DEL': delayed_count += 1
+
+            flight_times.sort()
+            gaps = []
+            for i in range(len(flight_times) - 1):
+                diff = (flight_times[i+1] - flight_times[i]).total_seconds() / 60
+                if diff > 15:
+                    gaps.append({"from": flight_times[i].strftime('%H:%M'), "to": flight_times[i+1].strftime('%H:%M'), "duration": int(diff)})
+
+            peak_hour = max(hourly_stats, key=hourly_stats.get) if hourly_stats else None
+
+            return {
+                "date": date_str,
+                "total": total_received,
+                "waiting": len(flight_times),
+                "arrived": total_received - len(flight_times),
+                "delayed": delayed_count,
+                "peak_hour": f"{peak_hour:02d}:00" if peak_hour is not None else "N/A",
+                "peak_count": hourly_stats[peak_hour] if peak_hour is not None else 0,
+                "gaps": gaps
+            }
+        except:
+            return "error"
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    results = None
+    if request.method == 'POST':
+        day = request.form.get('day')
+        start = request.form.get('start')
+        end = request.form.get('end')
+        analyzer = FlightAnalyzer()
+        results = analyzer.fetch_and_analyze(day, start, end)
+    
+    return render_template('index.html', results=results)
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(debug=True)
