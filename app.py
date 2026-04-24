@@ -32,7 +32,6 @@ class SmartQuietRadar:
             
             if not data: return None
 
-            # تحويل البيانات إلى كائنات datetime وفرزها زمنياً
             all_flights = []
             for f in data:
                 dt_raw = f.get('EarlyOrDelayedDateTime').split('+')[0]
@@ -41,10 +40,10 @@ class SmartQuietRadar:
                     "status": f.get('PublicRemark', {}).get('Code', '').upper()
                 })
             
-            # ترتيب الرحلات زمنياً لضمان دقة التحليل
+            # ترتيب الرحلات زمنياً لضمان دقة تحليل الفجوات
             all_flights.sort(key=lambda x: x['time'])
 
-            # 1. تحليل ساعة الذروة (بناءً على توزيع الرحلات في النطاق المختار)
+            # 1. تحليل ساعة الذروة
             hourly_counts = Counter(f['time'].hour for f in all_flights)
             peak_hour = max(hourly_counts, key=hourly_counts.get)
             peak_info = {
@@ -52,8 +51,7 @@ class SmartQuietRadar:
                 "count": hourly_counts[peak_hour]
             }
 
-            # 2. تحليل "أوقات لا يوجد بها رحلات" (مرتبة زمنياً)
-            # نأخذ فقط الرحلات التي لم تصل بعد لحساب أوقات الراحة المستقبلية
+            # 2. تحليل أوقات عدم وجود رحلات (المرتبة زمنياً)
             waiting_times = [f['time'] for f in all_flights if f['status'] not in ['ARR', 'DLV', 'LND']]
             
             quiet_periods = []
@@ -67,9 +65,7 @@ class SmartQuietRadar:
                         "sort_key": waiting_times[i]
                     })
             
-            # التأكد من ترتيب أوقات الراحة من الأقرب إلى الأبعد زمنياً
             quiet_periods.sort(key=lambda x: x['sort_key'])
-
             return {"peak": peak_info, "quiet": quiet_periods}
         except:
             return "error"
@@ -80,104 +76,111 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Quiet & Peak Radar</title>
+    <title>رادار أوقات الراحة الذكي</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css">
     <style>
         :root {
             --bg: #000000;
-            --card-matte: #0a0a0a;
-            --accent-cyan: #00f2ff;
+            --card-matte: #0d0d0d;
+            --accent: #00f2ff;
             --peak-gold: #ffcc00;
         }
         body { 
             background-color: var(--bg); 
             color: #ffffff; 
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            padding: 20px;
+            font-family: system-ui, -apple-system, sans-serif;
+            padding: 15px;
         }
         .search-container {
             background-color: var(--card-matte);
             border: 1px solid #1a1a1a;
-            border-radius: 16px;
-            padding: 25px;
-            margin-bottom: 30px;
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 25px;
         }
         .peak-card {
             background: linear-gradient(145deg, #1a1400, #0a0a0a);
             border: 1px solid var(--peak-gold);
-            border-radius: 15px;
+            border-radius: 18px;
             padding: 20px;
             text-align: center;
-            margin-bottom: 30px;
-            box-shadow: 0 10px 30px rgba(255, 204, 0, 0.05);
+            margin-bottom: 25px;
         }
         .quiet-item {
             background-color: var(--card-matte);
-            border: 1px solid #1a1a1a;
-            border-radius: 12px;
-            padding: 18px 25px;
+            border-radius: 14px;
+            padding: 15px 20px;
             margin-bottom: 12px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            border-right: 4px solid var(--accent-cyan);
+            border-right: 4px solid var(--accent);
         }
-        .duration-text {
-            background: rgba(0, 242, 255, 0.1);
-            color: var(--accent-cyan);
-            padding: 5px 15px;
+        .duration-badge {
+            background: rgba(0, 242, 255, 0.15);
+            color: var(--accent);
+            padding: 6px 14px;
             border-radius: 8px;
             font-weight: 800;
-            font-size: 1.1rem;
+            font-size: 1rem;
         }
-        .time-display {
-            font-size: 1.6rem;
+        .time-text {
+            font-size: 1.5rem;
             font-weight: 700;
-            letter-spacing: 1px;
-            color: #f0f0f0;
+            font-family: monospace;
         }
-        .arrow-sep { color: #333; margin: 0 15px; font-size: 1rem; }
-        .form-label { color: #555; font-size: 0.8rem; font-weight: bold; margin-bottom: 8px; }
-        .form-control { background: #000; border: 1px solid #222; color: #fff; border-radius: 10px; padding: 12px; }
-        .form-control:focus { border-color: var(--accent-cyan); box-shadow: none; background: #000; color: #fff; }
-        .btn-update { background: var(--accent-cyan); color: #000; font-weight: 900; border-radius: 10px; border: none; padding: 12px; }
+        .arrow { color: #444; margin: 0 12px; }
+        .form-label { color: #777; font-size: 0.85rem; margin-bottom: 8px; display: block; }
+        .form-control { background: #000; border: 1px solid #222; color: #fff; border-radius: 12px; padding: 10px; text-align: center; }
+        .btn-update { background: var(--accent); color: #000; font-weight: 900; border-radius: 12px; border: none; padding: 12px; width: 100%; margin-top: 10px; }
     </style>
 </head>
 <body class="container">
-    <div class="text-center mb-5">
-        <h2 class="fw-bold">تحليل الحركة الزمنية <span style="color: var(--accent-cyan);">T1</span></h2>
+    <div class="text-center mt-3 mb-4">
+        <h4 class="fw-bold">رادار تحليل الحركة <span style="color: var(--accent);">T1</span></h4>
     </div>
 
-    <div class="search-container mx-auto" style="max-width: 850px;">
-        <form method="POST" class="row g-3 align-items-end">
-            <div class="col-md-3 col-6"><label class="form-label">اليوم</label><input type="number" name="day" class="form-control" value="{{ current_day }}"></div>
-            <div class="col-md-3 col-6"><label class="form-label">بداية الوقت</label><input type="text" name="start" class="form-control" value="06:00"></div>
-            <div class="col-md-3 col-6"><label class="form-label">نهاية الوقت</label><input type="text" name="end" class="form-control" value="23:59"></div>
-            <div class="col-md-3 col-6"><button type="submit" class="btn btn-update w-100">تحديث البيانات</button></div>
+    <div class="search-container mx-auto" style="max-width: 500px;">
+        <form method="POST">
+            <div class="row g-2">
+                <div class="col-4">
+                    <label class="form-label">اليوم</label>
+                    <input type="number" name="day" class="form-control" value="{{ selected_day }}">
+                </div>
+                <div class="col-4">
+                    <label class="form-label">بداية الوقت</label>
+                    <input type="text" name="start" class="form-control" value="{{ selected_start }}">
+                </div>
+                <div class="col-4">
+                    <label class="form-label">نهاية الوقت</label>
+                    <input type="text" name="end" class="form-control" value="{{ selected_end }}">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-update">تحديث البيانات</button>
         </form>
     </div>
 
     {% if data %}
-    <div class="mx-auto" style="max-width: 650px;">
-        <div class="peak-card">
-            <div style="color: var(--peak-gold); font-size: 0.9rem; font-weight: bold;">ساعة الذروة القصوى</div>
-            <div style="font-size: 2.2rem; font-weight: 900; margin: 10px 0;">{{ data.peak.range }}</div>
-            <div style="color: #aaa;">كثافة الرحلات: <span style="color: #fff; font-size: 1.5rem;">{{ data.peak.count }}</span> رحلات</div>
+    <div class="mx-auto" style="max-width: 500px;">
+        <div class="peak-card shadow">
+            <div style="color: var(--peak-gold); font-size: 0.8rem; font-weight: bold;">ساعة الذروة المتوقعة</div>
+            <div style="font-size: 2rem; font-weight: 900; margin: 5px 0;">{{ data.peak.range }}</div>
+            <div style="color: #888;">الكثافة: <span style="color: #fff; font-size: 1.2rem;">{{ data.peak.count }}</span> رحلات</div>
         </div>
 
-        <div class="text-secondary small mb-3 text-center">أوقات لا يوجد بها رحلات (مرتبة زمنياً)</div>
+        <div class="text-center text-secondary small mb-3">أوقات لا يوجد بها رحلات (> 15 د)</div>
 
         {% for p in data.quiet %}
         <div class="quiet-item shadow-sm">
-            <div class="duration-text">{{ p.duration }} دقيقة</div>
-            <div class="time-display">
+            <div class="duration-badge">{{ p.duration }} دقيقة</div>
+            <div class="time-text">
                 <span>{{ p.end }}</span>
-                <span class="arrow-sep">◀</span>
+                <span class="arrow">◀</span>
                 <span>{{ p.start }}</span>
             </div>
         </div>
         {% else %}
-        <div class="text-center py-5 text-secondary">لا توجد فترات راحة تتجاوز 15 دقيقة</div>
+        <div class="text-center py-5 text-secondary">لا توجد أوقات راحة طويلة حالياً</div>
         {% endfor %}
     </div>
     {% endif %}
@@ -188,11 +191,28 @@ HTML_TEMPLATE = """
 @app.route('/', methods=['GET', 'POST'])
 def index():
     now = datetime.now()
+    # قيم افتراضية تلقائية بناءً على الوقت الحالي
+    current_day = now.day
+    current_hour = now.strftime('%H:00')
+    default_end = "23:59"
+
+    # استخدام القيم المرسلة أو الافتراضية
+    day = request.form.get('day', current_day)
+    start = request.form.get('start', current_hour)
+    end = request.form.get('end', default_end)
+
     results = None
-    if request.method == 'POST':
+    if request.method == 'POST' or request.args.get('auto'):
         analyzer = SmartQuietRadar()
-        results = analyzer.analyze_data(request.form.get('day'), request.form.get('start'), request.form.get('end'))
-    return render_template_string(HTML_TEMPLATE, data=results, current_day=now.day)
+        results = analyzer.analyze_data(day, start, end)
+    
+    return render_template_string(
+        HTML_TEMPLATE, 
+        data=results, 
+        selected_day=day, 
+        selected_start=start, 
+        selected_end=end
+    )
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
