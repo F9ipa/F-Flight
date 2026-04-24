@@ -20,7 +20,7 @@ class FlightAnalyzer:
             'LND': 'هبطت', 'ARR': 'وصلت', 'DLV': 'تم تسليم العفش',
             'CAN': 'ملغاة', 'EST': 'وقت تقديري'
         }
-        return statuses.get(code, "غير معروف")
+        return statuses.get(code, "مجدولة")
 
     def fetch_and_analyze(self, day, start_h, end_h):
         now = datetime.now()
@@ -33,24 +33,32 @@ class FlightAnalyzer:
             
             params = {
                 "$filter": f"(EarlyOrDelayedDateTime ge {iso_start} and EarlyOrDelayedDateTime lt {iso_end}) and PublicRemark/Code ne 'NOP' and tolower(FlightNature) eq 'arrival' and Terminal eq 'T1' and (tolower(InternationalStatus) eq 'international')",
-                "$orderby": "EarlyOrDelayedDateTime", "$count": "true"
+                "$orderby": "EarlyOrDelayedDateTime",
+                "$count": "true"
             }
             
             response = requests.get(self.url, params=params, headers=self.headers, timeout=10)
-            data = response.json().get('value', [])
+            json_data = response.json()
+            data = json_data.get('value', [])
+            
             if not data: return None
 
             flight_times, flights_list, delayed_count = [], [], 0
             hourly_stats = Counter()
 
             for f in data:
+                # استخراج جهة القدوم بدقة من الـ API
+                origin_info = f.get('OriginAirport', {})
+                # نحاول جلب الاسم العربي، ثم الإنجليزي، ثم الكود الدولي للمطار
+                origin_city = origin_info.get('CityNameAr') or origin_info.get('CityNameEn') or origin_info.get('IATACode') or "غير معروف"
+                
                 status_code = f.get('PublicRemark', {}).get('Code', '').upper()
                 dt_raw = f.get('EarlyOrDelayedDateTime').split('+')[0]
                 dt_obj = datetime.fromisoformat(dt_raw)
                 
                 flights_list.append({
                     "code": f"{f.get('OperatingAirline', {}).get('IATA', '')} {f.get('FlightNumber', '')}",
-                    "origin": f.get('OriginAirport', {}).get('CityNameAr', 'غير معروف'),
+                    "origin": origin_city,
                     "status": self.get_status_ar(status_code),
                     "raw_status": status_code,
                     "time": dt_obj.strftime('%H:%M')
@@ -75,7 +83,9 @@ class FlightAnalyzer:
                 "peak_count": hourly_stats[peak_hour] if peak_hour is not None else 0,
                 "gaps": gaps, "flights": flights_list
             }
-        except: return "error"
+        except Exception as e:
+            print(f"Error: {e}")
+            return "error"
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -83,138 +93,72 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KAIA Intelligence Dashboard</title>
+    <title>KAIA Smart Dashboard</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root { --bg-dark: #0f172a; --card-bg: #1e293b; --accent: #38bdf8; }
-        body { background-color: var(--bg-dark); color: #f8fafc; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
-        .dashboard-card { background: var(--card-bg); border-radius: 16px; border: 1px solid #334155; padding: 1.5rem; transition: 0.3s; }
-        .stat-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; margin-bottom: 1rem; }
-        .form-control { background: #0f172a; border: 1px solid #334155; color: white; border-radius: 10px; }
-        .btn-primary { background: var(--accent); border: none; font-weight: 600; border-radius: 10px; padding: 10px 25px; }
-        .table-container { background: var(--card-bg); border-radius: 16px; border: 1px solid #334155; overflow: hidden; }
-        .status-pill { padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 500; }
-        .gap-item { border-right: 4px solid var(--accent); background: #111a2e; padding: 10px; border-radius: 0 8px 8px 0; margin-bottom: 10px; }
-        .nav-header { border-bottom: 1px solid #334155; padding: 1rem 0; margin-bottom: 2rem; }
+        :root { --bg: #0b0f19; --card: #161c2d; --text: #f1f5f9; --accent: #38bdf8; }
+        body { background-color: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
+        .dashboard-card { background: var(--card); border-radius: 12px; border: 1px solid #2d3748; padding: 1.25rem; }
+        .form-control { background: #0b0f19; border: 1px solid #2d3748; color: white; border-radius: 8px; }
+        .btn-primary { background: var(--accent); border: none; font-weight: 600; }
+        .status-pill { padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; }
+        .table-responsive { border-radius: 12px; border: 1px solid #2d3748; }
+        .table { --bs-table-bg: transparent; color: var(--text); margin-bottom: 0; }
+        .text-info-custom { color: var(--accent); }
     </style>
 </head>
-<body class="container pb-5">
-    <header class="nav-header d-flex justify-content-between align-items-center">
-        <h4 class="mb-0 text-info font-monospace"><i class="fa-solid fa-plane-arrival me-2"></i> KAIA SMART ANALYZER</h4>
-        <span class="badge bg-dark border border-secondary">{{ current_time }}</span>
-    </header>
-
-    <section class="mb-4">
-        <div class="dashboard-card shadow-sm">
-            <form method="POST" class="row g-3 align-items-end">
-                <div class="col-md-3">
-                    <label class="form-label small text-secondary">تاريخ اليوم</label>
-                    <input type="number" name="day" class="form-control" value="{{ current_day }}">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small text-secondary">بداية النافذة</label>
-                    <input type="text" name="start" class="form-control" value="06:00">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small text-secondary">نهاية النافذة</label>
-                    <input type="text" name="end" class="form-control" value="14:00">
-                </div>
-                <div class="col-md-3">
-                    <button type="submit" class="btn btn-primary w-100"><i class="fa-solid fa-magnifying-glass me-2"></i>تحديث البيانات</button>
-                </div>
-            </form>
-        </div>
-    </section>
-
-    {% if results %}
-    <div class="row g-4 mb-5">
-        <div class="col-md-3">
-            <div class="dashboard-card">
-                <div class="stat-icon bg-info bg-opacity-10 text-info"><i class="fa-solid fa-list-check"></i></div>
-                <div class="text-secondary small">إجمالي الحركة</div>
-                <div class="h2 mb-0">{{ results.total }}</div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="dashboard-card">
-                <div class="stat-icon bg-warning bg-opacity-10 text-warning"><i class="fa-solid fa-clock-rotate-left"></i></div>
-                <div class="text-secondary small">في الانتظار</div>
-                <div class="h2 mb-0 text-warning">{{ results.waiting }}</div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="dashboard-card">
-                <div class="stat-icon bg-danger bg-opacity-10 text-danger"><i class="fa-solid fa-bolt"></i></div>
-                <div class="text-secondary small">الرحلات المتأخرة</div>
-                <div class="h2 mb-0 text-danger">{{ results.delayed }}</div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="dashboard-card">
-                <div class="stat-icon bg-success bg-opacity-10 text-success"><i class="fa-solid fa-fire"></i></div>
-                <div class="text-secondary small">ساعة الذروة</div>
-                <div class="h2 mb-0">{{ results.peak_hour }}</div>
-            </div>
-        </div>
+<body class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h4 class="text-info-custom fw-bold"><i class="fa-solid fa-tower-observation me-2"></i> رادار الصالة 1</h4>
+        <div class="small text-secondary">{{ current_time }}</div>
     </div>
 
-    <div class="row g-4 mb-5">
-        <div class="col-lg-8">
-            <div class="table-container shadow-lg">
-                <div class="p-3 bg-dark d-flex justify-content-between align-items-center">
-                    <h6 class="mb-0"><i class="fa-solid fa-table me-2"></i>مجدول الرحلات التفصيلي</h6>
-                </div>
-                <div class="table-responsive" style="max-height: 400px;">
-                    <table class="table table-hover table-dark mb-0">
-                        <thead class="small text-secondary">
-                            <tr>
-                                <th class="ps-4">الرحلة</th>
-                                <th>القادمة من</th>
-                                <th>الموعد</th>
-                                <th>الحالة</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for f in results.flights %}
-                            <tr>
-                                <td class="ps-4 fw-bold text-info">{{ f.code }}</td>
-                                <td>{{ f.origin }}</td>
-                                <td>{{ f.time }}</td>
-                                <td>
-                                    <span class="status-pill 
-                                        {% if f.raw_status == 'DEL' %}bg-danger bg-opacity-20 text-danger
-                                        {% elif f.raw_status in ['ARR', 'LND', 'DLV'] %}bg-success bg-opacity-20 text-success
-                                        {% elif f.raw_status == 'WIL' %}bg-warning bg-opacity-20 text-warning
-                                        {% else %}bg-primary bg-opacity-20 text-info{% endif %}">
-                                        {{ f.status }}
-                                    </span>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-        <div class="col-lg-4">
-            <div class="dashboard-card h-100">
-                <h6 class="mb-4"><i class="fa-solid fa-hourglass-half me-2"></i>تحليل الفجوات</h6>
-                {% for gap in results.gaps %}
-                <div class="gap-item">
-                    <div class="d-flex justify-content-between mb-1">
-                        <span class="fw-bold">{{ gap.from }} <i class="fa-solid fa-arrow-left-long mx-2"></i> {{ gap.to }}</span>
-                        <span class="badge bg-secondary">{{ gap.duration }} د</span>
-                    </div>
-                </div>
-                {% else %}
-                <div class="text-center py-5 text-secondary">
-                    <i class="fa-solid fa-circle-check fa-3x mb-3 opacity-25"></i>
-                    <p>لا توجد فجوات كبيرة حالياً</p>
-                </div>
+    <div class="dashboard-card mb-4">
+        <form method="POST" class="row g-2 align-items-end">
+            <div class="col-md-3"><label class="small text-secondary">يوم</label><input type="number" name="day" class="form-control form-control-sm" value="{{ current_day }}"></div>
+            <div class="col-md-3"><label class="small text-secondary">من</label><input type="text" name="start" class="form-control form-control-sm" value="06:00"></div>
+            <div class="col-md-3"><label class="small text-secondary">إلى</label><input type="text" name="end" class="form-control form-control-sm" value="23:59"></div>
+            <div class="col-md-3"><button type="submit" class="btn btn-primary btn-sm w-100">تحديث</button></div>
+        </form>
+    </div>
+
+    {% if results %}
+    <div class="row g-3 mb-4 text-center">
+        <div class="col-3"><div class="dashboard-card py-2"><div class="small text-secondary">الكل</div><div class="h4 mb-0">{{ results.total }}</div></div></div>
+        <div class="col-3"><div class="dashboard-card py-2"><div class="small text-secondary">منتظرة</div><div class="h4 mb-0 text-warning">{{ results.waiting }}</div></div></div>
+        <div class="col-3"><div class="dashboard-card py-2"><div class="small text-secondary">تأخير</div><div class="h4 mb-0 text-danger">{{ results.delayed }}</div></div></div>
+        <div class="col-3"><div class="dashboard-card py-2"><div class="small text-secondary">ذروة</div><div class="h4 mb-0">{{ results.peak_hour }}</div></div></div>
+    </div>
+
+    <div class="table-responsive bg-card shadow-sm">
+        <table class="table table-hover">
+            <thead class="bg-dark text-secondary small">
+                <tr>
+                    <th class="ps-3">الرحلة</th>
+                    <th>القادمة من</th>
+                    <th>الموعد</th>
+                    <th>الحالة</th>
+                </tr>
+            </thead>
+            <tbody class="small">
+                {% for f in results.flights %}
+                <tr>
+                    <td class="ps-3 fw-bold">{{ f.code }}</td>
+                    <td class="text-info-custom">{{ f.origin }}</td>
+                    <td>{{ f.time }}</td>
+                    <td>
+                        <span class="status-pill 
+                            {% if f.raw_status == 'DEL' %}bg-danger bg-opacity-10 text-danger
+                            {% elif f.raw_status in ['ARR', 'LND', 'DLV'] %}bg-success bg-opacity-10 text-success
+                            {% else %}bg-primary bg-opacity-10 text-info{% endif %}">
+                            {{ f.status }}
+                        </span>
+                    </td>
+                </tr>
                 {% endfor %}
-            </div>
-        </div>
+            </tbody>
+        </table>
     </div>
     {% endif %}
 </body>
@@ -229,12 +173,7 @@ def index():
         analyzer = FlightAnalyzer()
         results = analyzer.fetch_and_analyze(request.form.get('day'), request.form.get('start'), request.form.get('end'))
     
-    return render_template_string(
-        HTML_TEMPLATE, 
-        results=results, 
-        current_day=now.day, 
-        current_time=now.strftime('%H:%M')
-    )
+    return render_template_string(HTML_TEMPLATE, results=results, current_day=now.day, current_time=now.strftime('%H:%M'))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
