@@ -13,7 +13,7 @@ class GapAnalyzer:
             "User-Agent": "Mozilla/5.0"
         }
 
-    def fetch_gaps(self, day, start_h, end_h):
+    def fetch_quiet_periods(self, day, start_h, end_h):
         try:
             now = datetime.now()
             target_date = datetime(now.year, now.month, int(day))
@@ -31,7 +31,7 @@ class GapAnalyzer:
             
             if not data: return []
 
-            # استخراج الأوقات فقط للرحلات التي لم تصل بعد (مجدولة أو متأخرة)
+            # استخراج أوقات الرحلات القادمة فقط
             flight_times = []
             for f in data:
                 status = f.get('PublicRemark', {}).get('Code', '').upper()
@@ -41,16 +41,16 @@ class GapAnalyzer:
 
             flight_times.sort()
             
-            gaps = []
+            quiet_periods = []
             for i in range(len(flight_times) - 1):
                 diff = (flight_times[i+1] - flight_times[i]).total_seconds() / 60
                 if diff > 15:
-                    gaps.append({
-                        "from": flight_times[i].strftime('%H:%M'),
-                        "to": flight_times[i+1].strftime('%H:%M'),
+                    quiet_periods.append({
+                        "start": flight_times[i].strftime('%H:%M'),
+                        "end": flight_times[i+1].strftime('%H:%M'),
                         "duration": int(diff)
                     })
-            return gaps
+            return quiet_periods
         except:
             return "error"
 
@@ -60,113 +60,139 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>رادار الفجوات الزمنية</title>
+    <title>Quiet Hours Radar</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css">
     <style>
+        :root {
+            --bg-color: #050505;
+            --card-bg: #121212;
+            --accent-color: #00e5ff;
+            --text-main: #e0e0e0;
+            --text-dim: #757575;
+        }
         body { 
-            background-color: #000000; 
-            color: #ffffff; 
-            font-family: sans-serif;
-            padding-top: 20px;
-        }
-        .search-section {
-            background-color: #0a0a0a;
-            border: 1px solid #1a1a1a;
-            border-radius: 15px;
+            background-color: var(--bg-color); 
+            color: var(--text-main); 
+            font-family: 'Segoe UI', Roboto, sans-serif;
             padding: 20px;
-            margin-bottom: 30px;
+            letter-spacing: -0.5px;
         }
-        .gap-card {
-            background-color: #111827; /* لون مقارب للصورة المرفقة */
+        .header-title {
+            font-weight: 800;
+            color: var(--accent-color);
+            text-transform: uppercase;
+            font-size: 1.5rem;
+            margin-bottom: 5px;
+        }
+        .search-panel {
+            background-color: var(--card-bg);
+            border: 1px solid #1f1f1f;
             border-radius: 12px;
-            padding: 15px 20px;
-            margin-bottom: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .period-card {
+            background-color: var(--card-bg);
+            border-radius: 10px;
+            padding: 18px 25px;
+            margin-bottom: 10px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            border-right: 5px solid #38bdf8;
+            transition: transform 0.2s;
+            border: 1px solid #1a1a1a;
         }
-        .duration-badge {
-            background-color: #22d3ee;
-            color: #000000;
-            padding: 5px 15px;
-            border-radius: 20px;
-            font-weight: bold;
-            font-size: 0.9rem;
+        .duration-tag {
+            background-color: rgba(0, 229, 255, 0.1);
+            color: var(--accent-color);
+            padding: 6px 16px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 0.95rem;
+            border: 1px solid rgba(0, 229, 255, 0.3);
         }
-        .time-text {
-            font-size: 1.4rem;
-            font-weight: 500;
-            letter-spacing: 1px;
+        .time-range {
+            font-size: 1.6rem;
+            font-weight: 600;
+            font-family: monospace;
+            display: flex;
+            align-items: center;
         }
-        .separator {
-            color: #64748b;
-            margin: 0 15px;
+        .arrow-icon {
+            color: var(--text-dim);
+            margin: 0 20px;
+            font-size: 1rem;
         }
         .form-control {
             background-color: #000;
-            border: 1px solid #333;
+            border: 1px solid #222;
             color: #fff;
+            border-radius: 8px;
         }
         .form-control:focus {
             background-color: #000;
+            border-color: var(--accent-color);
             color: #fff;
-            border-color: #38bdf8;
             box-shadow: none;
         }
-        .btn-submit {
-            background-color: #38bdf8;
-            border: none;
-            font-weight: bold;
+        .btn-analyze {
+            background-color: var(--accent-color);
             color: #000;
+            font-weight: 800;
+            border-radius: 8px;
+            border: none;
+            padding: 10px;
         }
+        .btn-analyze:hover { background-color: #00b8cc; }
+        .quiet-label { color: var(--text-dim); font-size: 0.8rem; margin-bottom: 10px; display: block; }
     </style>
 </head>
 <body class="container">
-    <div class="text-center mb-4">
-        <h2 style="color: #38bdf8;">تحليل الفجوات الزمنية</h2>
-        <p class="text-secondary">عرض الفترات التي تزيد عن 15 دقيقة بدون رحلات</p>
+    <div class="text-center mb-5">
+        <div class="header-title">أوقات لا يوجد بها رحلات</div>
+        <div class="text-secondary small">نظام رصد فترات الراحة (أكثر من 15 دقيقة)</div>
     </div>
 
-    <div class="search-section shadow">
+    <div class="search-panel shadow-sm mx-auto" style="max-width: 800px;">
         <form method="POST" class="row g-3 align-items-end">
-            <div class="col-md-3">
-                <label class="small text-secondary mb-1">اليوم</label>
+            <div class="col-md-3 col-6">
+                <label class="quiet-label">اليوم</label>
                 <input type="number" name="day" class="form-control" value="{{ current_day }}">
             </div>
-            <div class="col-md-3">
-                <label class="small text-secondary mb-1">من الساعة</label>
+            <div class="col-md-3 col-6">
+                <label class="quiet-label">من (ساعة)</label>
                 <input type="text" name="start" class="form-control" value="06:00">
             </div>
-            <div class="col-md-3">
-                <label class="small text-secondary mb-1">إلى الساعة</label>
+            <div class="col-md-3 col-6">
+                <label class="quiet-label">إلى (ساعة)</label>
                 <input type="text" name="end" class="form-control" value="23:59">
             </div>
-            <div class="col-md-3">
-                <button type="submit" class="btn btn-submit w-100">تحليل الفجوات</button>
+            <div class="col-md-3 col-6">
+                <button type="submit" class="btn btn-analyze w-100">تحليل الآن</button>
             </div>
         </form>
     </div>
 
     <div class="mx-auto" style="max-width: 600px;">
-        {% if gaps == "error" %}
-            <div class="alert alert-danger bg-dark text-danger border-0">حدث خطأ في جلب البيانات</div>
-        {% elif gaps %}
-            {% for gap in gaps %}
-            <div class="gap-card shadow-sm">
-                <div class="duration-badge">
-                    {{ gap.duration }} دقيقة
+        {% if results == "error" %}
+            <div class="text-danger text-center">عذراً، تعذر الاتصال بالنظام</div>
+        {% elif results %}
+            <span class="quiet-label text-center mb-3">الفترات الزمنية المكتشفة</span>
+            {% for p in results %}
+            <div class="period-card">
+                <div class="duration-tag">
+                    {{ p.duration }} دقيقة
                 </div>
-                <div class="time-text">
-                    <span>{{ gap.to }}</span>
-                    <span class="separator">〈</span>
-                    <span>{{ gap.from }}</span>
+                <div class="time-range">
+                    <span>{{ p.end }}</span>
+                    <span class="arrow-icon">◀</span>
+                    <span>{{ p.start }}</span>
                 </div>
             </div>
             {% endfor %}
         {% elif request.method == 'POST' %}
-            <div class="text-center text-secondary py-5">
-                <h4>لا توجد فجوات تزيد عن 15 دقيقة</h4>
+            <div class="text-center py-5">
+                <div class="text-secondary">لا توجد أوقات راحة طويلة في هذا النطاق</div>
             </div>
         {% endif %}
     </div>
@@ -177,10 +203,10 @@ HTML_TEMPLATE = """
 @app.route('/', methods=['GET', 'POST'])
 def index():
     now = datetime.now()
-    gaps = None
+    results = None
     if request.method == 'POST':
         analyzer = GapAnalyzer()
-        gaps = analyzer.fetch_gaps(
+        results = analyzer.fetch_quiet_periods(
             request.form.get('day'), 
             request.form.get('start'), 
             request.form.get('end')
@@ -188,7 +214,7 @@ def index():
     
     return render_template_string(
         HTML_TEMPLATE, 
-        gaps=gaps, 
+        results=results, 
         current_day=now.day
     )
 
