@@ -18,7 +18,7 @@ class FlightAnalyzer:
         statuses = {
             'SCH': 'في موعدها', 'DEL': 'متأخرة', 'WIL': 'على وشك الهبوط',
             'LND': 'هبطت', 'ARR': 'وصلت', 'DLV': 'تم تسليم العفش',
-            'CAN': 'ملغاة', 'EST': 'وقت تقديري'
+            'CAN': 'ملغاة'
         }
         return statuses.get(code, "مجدولة")
 
@@ -29,7 +29,6 @@ class FlightAnalyzer:
             date_str = target_date.strftime('%Y-%m-%d')
             iso_start = f"{date_str}T{start_h}:00.000+03:00"
             iso_end = f"{date_str}T{end_h}:00.000+03:00"
-            limit_end_dt = datetime.fromisoformat(f"{date_str}T{end_h}")
             
             params = {
                 "$filter": f"(EarlyOrDelayedDateTime ge {iso_start} and EarlyOrDelayedDateTime lt {iso_end}) and PublicRemark/Code ne 'NOP' and tolower(FlightNature) eq 'arrival' and Terminal eq 'T1' and (tolower(InternationalStatus) eq 'international')",
@@ -42,34 +41,37 @@ class FlightAnalyzer:
             
             if not data: return None
 
-            flight_times, flights_list, delayed_count = [], [], 0
+            flights_list, delayed_count = [], 0
+            flight_times = []
             hourly_stats = Counter()
 
             for f in data:
-                # --- المنطق الذكي الجديد لجلب جهة القدوم ---
-                origin_obj = f.get('OriginAirport', {})
-                # نجرب جلب الاسم بالترتيب: مدينة عربي -> مدينة انجليزي -> اسم مطار عربي -> كود المطار
-                origin_city = (
-                    origin_obj.get('CityNameAr') or 
-                    origin_obj.get('CityNameEn') or 
-                    origin_obj.get('AirportNameAr') or 
-                    origin_obj.get('IATACode') or 
-                    "غير معروف"
-                )
+                # --- التعديل الجوهري بناءً على الـ Network في الصورة ---
+                # المصدر الحقيقي لجهة القدوم هو RouteOriginAirport
+                origin_obj = f.get('RouteOriginAirport', {})
+                if not origin_obj: # احتياطاً نجرب الحقل الآخر
+                    origin_obj = f.get('OriginAirport', {})
                 
+                # جلب المدينة (عربي أو انجليزي أو الكود)
+                origin_city = origin_obj.get('CityNameAr') or origin_obj.get('CityNameEn') or origin_obj.get('IATACode') or "غير معروف"
+                
+                # جلب اسم شركة الطيران (Airline)
+                airline_name = f.get('Airline', {}).get('NameAr') or f.get('Airline', {}).get('NameEn') or "طيران"
+
                 status_code = f.get('PublicRemark', {}).get('Code', '').upper()
                 dt_raw = f.get('EarlyOrDelayedDateTime').split('+')[0]
                 dt_obj = datetime.fromisoformat(dt_raw)
                 
                 flights_list.append({
-                    "code": f"{f.get('OperatingAirline', {}).get('IATA', '')} {f.get('FlightNumber', '')}",
+                    "code": f.get('FullFlightNumber') or f"{f.get('OperatingAirline', {}).get('IATA', '')} {f.get('FlightNumber', '')}",
+                    "airline": airline_name,
                     "origin": origin_city,
                     "status": self.get_status_ar(status_code),
                     "raw_status": status_code,
                     "time": dt_obj.strftime('%H:%M')
                 })
 
-                if status_code not in ['ARR', 'DLV', 'LND'] and dt_obj < limit_end_dt:
+                if status_code not in ['ARR', 'DLV', 'LND']:
                     flight_times.append(dt_obj)
                     hourly_stats[dt_obj.hour] += 1
                     if status_code == 'DEL': delayed_count += 1
@@ -89,7 +91,7 @@ class FlightAnalyzer:
                 "gaps": gaps, "flights": flights_list
             }
         except Exception as e:
-            print(f"Error detail: {e}")
+            print(f"Error: {e}")
             return "error"
 
 HTML_TEMPLATE = """
@@ -98,62 +100,63 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KAIA Radar - الصالة 1</title>
+    <title>محلل KAIA الذكي</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root { --bg: #0b0f19; --card: #161c2d; --accent: #38bdf8; }
-        body { background-color: var(--bg); color: #f1f5f9; font-family: 'Segoe UI', sans-serif; }
-        .dashboard-card { background: var(--card); border-radius: 15px; border: 1px solid #2d3748; padding: 1.5rem; }
-        .btn-primary { background: var(--accent); border: none; font-weight: bold; }
-        .status-pill { padding: 4px 12px; border-radius: 50px; font-size: 0.8rem; }
-        .table { color: #cbd5e1; vertical-align: middle; }
-        .text-accent { color: var(--accent); }
-        .table-hover tbody tr:hover { background-color: #1e293b; }
+        body { background-color: #0b0f19; color: #f1f5f9; font-family: 'Segoe UI', Tahoma, sans-serif; }
+        .card-custom { background: #161c2d; border: 1px solid #2d3748; border-radius: 12px; padding: 1.5rem; }
+        .table { --bs-table-bg: #161c2d; color: #f1f5f9; border-color: #2d3748; }
+        .status-badge { padding: 5px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: bold; }
+        .airline-text { font-size: 0.75rem; color: #94a3b8; display: block; }
+        .flight-code { font-size: 1.1rem; color: #38bdf8; font-weight: bold; }
     </style>
 </head>
 <body class="container py-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h4 class="text-accent fw-bold"><i class="fa-solid fa-plane-arrival me-2"></i> رادار الرحلات الدولية - T1</h4>
-        <div class="badge bg-dark border border-secondary p-2">{{ current_time }}</div>
+        <h3 class="text-info"><i class="fa-solid fa-plane-arrival me-2"></i> لوحة تحكم الرحلات - الصالة 1</h3>
+        <div class="text-secondary small">{{ current_time }}</div>
     </div>
 
-    <div class="dashboard-card mb-4 shadow">
-        <form method="POST" class="row g-3 align-items-end">
-            <div class="col-md-3"><label class="small text-secondary mb-1">📅 يوم الاستعلام</label><input type="number" name="day" class="form-control bg-dark text-white border-secondary" value="{{ current_day }}"></div>
-            <div class="col-md-3"><label class="small text-secondary mb-1">🕒 من ساعة</label><input type="text" name="start" class="form-control bg-dark text-white border-secondary" value="06:00"></div>
-            <div class="col-md-3"><label class="small text-secondary mb-1">🕒 إلى ساعة</label><input type="text" name="end" class="form-control bg-dark text-white border-secondary" value="23:59"></div>
-            <div class="col-md-3"><button type="submit" class="btn btn-primary w-100">تحديث الرادار</button></div>
+    <div class="card-custom mb-4 shadow-lg">
+        <form method="POST" class="row g-3">
+            <div class="col-md-3"><label class="small mb-1 text-secondary">يوم</label><input type="number" name="day" class="form-control bg-dark text-white border-secondary" value="{{ current_day }}"></div>
+            <div class="col-md-3"><label class="small mb-1 text-secondary">البداية</label><input type="text" name="start" class="form-control bg-dark text-white border-secondary" value="06:00"></div>
+            <div class="col-md-3"><label class="small mb-1 text-secondary">النهاية</label><input type="text" name="end" class="form-control bg-dark text-white border-secondary" value="23:59"></div>
+            <div class="col-md-3 mt-4 mt-md-auto"><button type="submit" class="btn btn-primary w-100 fw-bold">تحديث الرادار</button></div>
         </form>
     </div>
 
     {% if results %}
     <div class="row g-3 mb-4 text-center">
-        <div class="col-3"><div class="dashboard-card"><div class="text-secondary small">الكل</div><div class="h3 mb-0">{{ results.total }}</div></div></div>
-        <div class="col-3"><div class="dashboard-card"><div class="text-secondary small text-warning">منتظرة</div><div class="h3 mb-0 text-warning">{{ results.waiting }}</div></div></div>
-        <div class="col-3"><div class="dashboard-card"><div class="text-secondary small text-danger">متأخرة</div><div class="h3 mb-0 text-danger">{{ results.delayed }}</div></div></div>
-        <div class="col-3"><div class="dashboard-card"><div class="text-secondary small text-info">الذروة</div><div class="h3 mb-0 text-info">{{ results.peak_hour }}</div></div></div>
+        <div class="col-3"><div class="card-custom py-2 border-primary"><h6>الكل</h6><h3>{{ results.total }}</h3></div></div>
+        <div class="col-3"><div class="card-custom py-2 border-warning text-warning"><h6>منتظرة</h6><h3>{{ results.waiting }}</h3></div></div>
+        <div class="col-3"><div class="card-custom py-2 border-danger text-danger"><h6>تأخير</h6><h3>{{ results.delayed }}</h3></div></div>
+        <div class="col-3"><div class="card-custom py-2 border-info text-info"><h6>الذروة</h6><h3>{{ results.peak_hour }}</h3></div></div>
     </div>
 
-    <div class="dashboard-card p-0 shadow overflow-hidden">
-        <div class="table-responsive" style="max-height: 600px;">
-            <table class="table table-hover mb-0">
-                <thead class="bg-dark text-secondary small">
-                    <tr>
-                        <th class="ps-4 py-3">الرحلة</th>
-                        <th class="py-3">قادمة من</th>
-                        <th class="py-3">الموعد</th>
-                        <th class="py-3">الحالة</th>
+    <div class="card-custom p-0 overflow-hidden shadow-lg">
+        <div class="table-responsive" style="max-height: 550px;">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-dark">
+                    <tr class="text-secondary">
+                        <th class="ps-4">الرحلة</th>
+                        <th>قادمة من</th>
+                        <th>الوقت</th>
+                        <th>الحالة</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for f in results.flights %}
-                    <tr style="border-bottom: 1px solid #2d3748;">
-                        <td class="ps-4 fw-bold text-white">{{ f.code }}</td>
-                        <td class="text-accent fw-medium">{{ f.origin }}</td>
+                    <tr>
+                        <td class="ps-4">
+                            <span class="flight-code">{{ f.code }}</span>
+                            <span class="airline-text">{{ f.airline }}</span>
+                        </td>
+                        <td class="fw-bold text-info">{{ f.origin }}</td>
                         <td>{{ f.time }}</td>
                         <td>
-                            <span class="status-pill 
+                            <span class="status-badge 
                                 {% if f.raw_status == 'DEL' %}bg-danger bg-opacity-20 text-danger
                                 {% elif f.raw_status in ['ARR', 'LND', 'DLV'] %}bg-success bg-opacity-20 text-success
                                 {% elif f.raw_status == 'WIL' %}bg-warning bg-opacity-20 text-warning
