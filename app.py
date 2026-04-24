@@ -14,6 +14,15 @@ class SmartQuietRadar:
             "User-Agent": "Mozilla/5.0"
         }
 
+    def format_time_ar(self, dt_obj):
+        """تحويل الوقت إلى صيغة 12 ساعة مع ص وم"""
+        time_str = dt_obj.strftime('%I:%M')
+        suffix = "ص" if dt_obj.hour < 12 else "م"
+        # إزالة الصفر الحشوي في البداية لتكون القراءة أجمل (مثلاً 08 تصبح 8)
+        if time_str.startswith('0'):
+            time_str = time_str[1:]
+        return f"{time_str} {suffix}"
+
     def analyze_data(self, day, start_h, end_h):
         try:
             now = datetime.now()
@@ -42,20 +51,19 @@ class SmartQuietRadar:
             
             all_flights.sort(key=lambda x: x['time'])
 
-            # 1. تحليل ساعة الذروة بتنسيق 12 ساعة
+            # 1. تحليل ساعة الذروة
             hourly_counts = Counter(f['time'].hour for f in all_flights)
             peak_hour_24 = max(hourly_counts, key=hourly_counts.get)
             
-            # تحويل ساعة الذروة لنسق 12 ساعة
-            peak_start_12 = datetime.strptime(f"{peak_hour_24}", "%H").strftime("%I:%M %p")
-            peak_end_12 = datetime.strptime(f"{(peak_hour_24+1)%24}", "%H").strftime("%I:%M %p")
+            peak_start_dt = datetime.strptime(f"{peak_hour_24}", "%H")
+            peak_end_dt = datetime.strptime(f"{(peak_hour_24+1)%24}", "%H")
 
             peak_info = {
-                "range": f"{peak_start_12} - {peak_end_12}",
+                "range": f"{self.format_time_ar(peak_start_dt)} - {self.format_time_ar(peak_end_dt)}",
                 "count": hourly_counts[peak_hour_24]
             }
 
-            # 2. تحليل أوقات عدم وجود رحلات بتنسيق 12 ساعة
+            # 2. تحليل أوقات عدم وجود رحلات
             waiting_times = [f['time'] for f in all_flights if f['status'] not in ['ARR', 'DLV', 'LND']]
             
             quiet_periods = []
@@ -63,8 +71,8 @@ class SmartQuietRadar:
                 diff = (waiting_times[i+1] - waiting_times[i]).total_seconds() / 60
                 if diff > 15:
                     quiet_periods.append({
-                        "start": waiting_times[i].strftime('%I:%M %p'), # تنسيق 12 ساعة
-                        "end": waiting_times[i+1].strftime('%I:%M %p'),   # تنسيق 12 ساعة
+                        "start": self.format_time_ar(waiting_times[i]),
+                        "end": self.format_time_ar(waiting_times[i+1]),
                         "duration": int(diff),
                         "sort_key": waiting_times[i]
                     })
@@ -80,7 +88,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>رادار الحركة | 12 ساعة</title>
+    <title>رادار الحركة T1</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css">
     <style>
         :root {
@@ -92,7 +100,7 @@ HTML_TEMPLATE = """
         body { 
             background-color: var(--bg); 
             color: #ffffff; 
-            font-family: system-ui, sans-serif;
+            font-family: 'Segoe UI', system-ui, sans-serif;
             padding: 15px;
         }
         .search-box {
@@ -109,7 +117,6 @@ HTML_TEMPLATE = """
             padding: 20px;
             text-align: center;
             margin-bottom: 25px;
-            box-shadow: 0 4px 15px rgba(255, 204, 0, 0.1);
         }
         .quiet-card {
             background-color: var(--card);
@@ -121,22 +128,19 @@ HTML_TEMPLATE = """
             justify-content: space-between;
             border-right: 4px solid var(--accent);
         }
-        .duration-pill {
+        .duration-badge {
             background: rgba(0, 242, 255, 0.1);
             color: var(--accent);
             padding: 5px 12px;
             border-radius: 8px;
             font-weight: 800;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
         }
-        .time-display {
-            font-size: 1.1rem;
+        .time-text {
+            font-size: 1.2rem;
             font-weight: 700;
-            display: flex;
-            align-items: center;
-            gap: 10px;
         }
-        .arrow { color: #444; font-size: 0.8rem; }
+        .arrow { color: #444; margin: 0 10px; font-size: 0.8rem; }
         .form-label { color: #666; font-size: 0.8rem; margin-bottom: 5px; display: block; }
         .form-control { background: #000; border: 1px solid #222; color: #fff; border-radius: 10px; text-align: center; }
         .btn-cyan { background: var(--accent); color: #000; font-weight: 900; border-radius: 12px; border: none; padding: 12px; }
@@ -144,7 +148,7 @@ HTML_TEMPLATE = """
 </head>
 <body class="container">
     <div class="text-center my-4">
-        <h5 class="fw-bold">رادار الحركة الذكي <span style="color: var(--accent);">T1</span></h5>
+        <h5 class="fw-bold">رادار الحركة <span style="color: var(--accent);">T1</span></h5>
     </div>
 
     <div class="search-box mx-auto" style="max-width: 500px;">
@@ -155,11 +159,11 @@ HTML_TEMPLATE = """
                     <input type="number" name="day" class="form-control" value="{{ selected_day }}">
                 </div>
                 <div class="col-4">
-                    <label class="form-label">من (24س)</label>
+                    <label class="form-label">من الساعة</label>
                     <input type="text" name="start" class="form-control" value="{{ selected_start }}">
                 </div>
                 <div class="col-4">
-                    <label class="form-label">إلى (24س)</label>
+                    <label class="form-label">إلى الساعة</label>
                     <input type="text" name="end" class="form-control" value="{{ selected_end }}">
                 </div>
             </div>
@@ -169,25 +173,25 @@ HTML_TEMPLATE = """
 
     {% if data %}
     <div class="mx-auto" style="max-width: 500px;">
-        <div class="peak-card">
-            <div style="color: var(--peak-gold); font-size: 0.8rem; font-weight: bold; letter-spacing: 1px;">ساعة الذروة</div>
-            <div style="font-size: 1.6rem; font-weight: 900; margin: 8px 0;">{{ data.peak.range }}</div>
-            <div style="color: #888; font-size: 0.9rem;">إجمالي الرحلات: <span style="color: #fff; font-size: 1.2rem;">{{ data.peak.count }}</span></div>
+        <div class="peak-card shadow">
+            <div style="color: var(--peak-gold); font-size: 0.8rem; font-weight: bold; letter-spacing: 1px;">أوقات الذروة</div>
+            <div style="font-size: 1.8rem; font-weight: 900; margin: 8px 0;">{{ data.peak.range }}</div>
+            <div style="color: #888;">عدد رحلات الذروة: <span style="color: #fff; font-size: 1.3rem;">{{ data.peak.count }}</span></div>
         </div>
 
         <p class="text-center text-secondary small mb-3">أوقات لا يوجد بها رحلات (> 15 دقيقة)</p>
 
         {% for p in data.quiet %}
         <div class="quiet-card">
-            <div class="duration-pill">{{ p.duration }} دقيقة</div>
-            <div class="time-display">
+            <div class="duration-badge">{{ p.duration }} دقيقة</div>
+            <div class="time-text">
                 <span>{{ p.end }}</span>
                 <span class="arrow">◀</span>
                 <span>{{ p.start }}</span>
             </div>
         </div>
         {% else %}
-        <div class="text-center py-5 text-secondary">لا توجد فترات هدوء طويلة</div>
+        <div class="text-center py-5 text-secondary">لا توجد فترات راحة طويلة</div>
         {% endfor %}
     </div>
     {% endif %}
