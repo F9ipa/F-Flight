@@ -2,99 +2,59 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>محلل رحلات مطار الملك عبدالعزيز</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css">
     <style>
-        body { background-color: #0d1117; color: #c9d1d9; font-family: sans-serif; margin: 0; padding: 15px; }
-        .header-bar { background: #161b22; padding: 15px; border-radius: 8px; display: flex; justify-content: center; gap: 10px; align-items: center; margin-bottom: 20px; border: 1px solid #30363d; }
-        input { background: #000; color: #fff; border: 1px solid #30363d; padding: 5px; border-radius: 4px; }
-        button { background: #238636; color: white; border: none; padding: 8px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; }
-        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
-        .tab { flex: 1; padding: 12px; text-align: center; background: #21262d; border-radius: 6px; cursor: pointer; color: #8b949e; border: 1px solid #30363d; }
-        .tab.active { background: #2f81f7; color: white; border-color: #58a6ff; }
-        .content { display: none; }
-        .content.active { display: block; }
-        table { width: 100%; border-collapse: collapse; }
-        th { color: #58a6ff; border-bottom: 1px solid #30363d; padding: 12px; text-align: right; }
-        td { padding: 12px; border-bottom: 1px solid #21262d; }
-        .delayed { color: #ff7b72; font-weight: bold; }
-        .peak-box { border: 2px solid #f0883e; border-radius: 12px; padding: 25px; text-align: center; margin-top: 10px; }
-        .gap-item { background: #161b22; padding: 12px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; }
+        body { background-color: #f4f7f6; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .card { border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .stat-box { padding: 20px; border-radius: 10px; color: white; text-align: center; }
     </style>
 </head>
-<body>
-    <div class="header-bar">
-        من: <input type="time" id="start" value="01:00"> 
-        إلى: <input type="time" id="end" value="23:59">
-        <button onclick="update()">تحديث</button>
+<body class="container py-5">
+    <h2 class="text-center mb-4">✈️ نظام تحليل الرحلات الذكي</h2>
+    
+    <div class="card p-4 mb-4">
+        <form method="POST" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">اليوم (رقم)</label>
+                <input type="number" name="day" class="form-control" placeholder="مثال: 24" required>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">وقت البدء</label>
+                <input type="text" name="start" class="form-control" value="06:00">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">وقت الانتهاء</label>
+                <input type="text" name="end" class="form-control" value="14:00">
+            </div>
+            <div class="col-12 text-center">
+                <button type="submit" class="btn btn-primary px-5">تحليل البيانات</button>
+            </div>
+        </form>
     </div>
 
-    <div class="tabs">
-        <div class="tab active" onclick="switchTab(event, 'arrivals')">رحلات الوصول</div>
-        <div class="tab" onclick="switchTab(event, 'peak')">الذروة والفجوات</div>
-    </div>
-
-    <div id="arrivals" class="content active">
-        <table>
-            <thead>
-                <tr>
-                    <th>الرحلة</th>
-                    <th>جهة الإقلاع</th>
-                    <th>الوقت</th>
-                    <th>الحالة</th>
-                </tr>
-            </thead>
-            <tbody id="rows"></tbody>
-        </table>
-    </div>
-
-    <div id="peak" class="content">
-        <div class="peak-box">
-            <div style="color:#8b949e">وقت الذروة المتوقع</div>
-            <h1 id="pTime">-</h1>
-            <div id="pCount" style="color:#8b949e"></div>
+    {% if results == "error" %}
+        <div class="alert alert-danger">حدث خطأ في البيانات أو التنسيق.</div>
+    {% elif results %}
+        <div class="row g-3 mb-4">
+            <div class="col-md-3"><div class="stat-box bg-dark"><h5>الإجمالي</h5><h3>{{ results.total }}</h3></div></div>
+            <div class="col-md-3"><div class="stat-box bg-primary"><h5>منتظرة</h5><h3>{{ results.waiting }}</h3></div></div>
+            <div class="col-md-3"><div class="stat-box bg-success"><h5>وصلت</h5><h3>{{ results.arrived }}</h3></div></div>
+            <div class="col-md-3"><div class="stat-box bg-warning"><h5>متأخرة</h5><h3>{{ results.delayed }}</h3></div></div>
         </div>
-        <h3 style="color:#58a6ff; margin-top:25px;">⏳ الفجوات التشغيلية (> 15 دقيقة):</h3>
-        <div id="gaps"></div>
-    </div>
 
-    <script>
-        function switchTab(e, id) {
-            document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.getElementById(id).classList.add('active');
-            e.currentTarget.classList.add('active');
-        }
-
-        async function update() {
-            const res = await fetch('/analyze', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({start: document.getElementById('start').value, end: document.getElementById('end').value})
-            });
-            const data = await res.json();
-            
-            document.getElementById('rows').innerHTML = data.flights.map(f => `
-                <tr class="${f.is_delayed ? 'delayed' : ''}">
-                    <td>${f.flight_no}</td>
-                    <td>${f.origin}</td>
-                    <td>${f.time}</td>
-                    <td>${f.status}</td>
-                </tr>`).join('');
-
-            if(data.peak) {
-                document.getElementById('pTime').innerText = data.peak.time;
-                document.getElementById('pCount').innerText = "عدد الرحلات: " + data.peak.count;
-            } else {
-                document.getElementById('pTime').innerText = "لا توجد ذروة";
-            }
-
-            document.getElementById('gaps').innerHTML = data.gaps.map(g => `
-                <div class="gap-item">
-                    <span style="color:#58a6ff">${g.from} ← ${g.to}</span>
-                    <span>${g.duration} دقيقة</span>
-                </div>`).join('');
-        }
-        window.onload = update;
-    </script>
+        <div class="card p-4">
+            <h4>🔥 ذروة الرحلات: <span class="text-danger">{{ results.peak_hour }}</span> ({{ results.peak_count }} رحلة)</h4>
+            <hr>
+            <h5>⏳ الفجوات الزمنية المكتشفة:</h5>
+            <ul class="list-group">
+                {% for gap in results.gaps %}
+                    <li class="list-group-item">من <b>{{ gap.from }}</b> إلى <b>{{ gap.to }}</b> (مدة: {{ gap.duration }} دقيقة)</li>
+                {% else %}
+                    <p>لا توجد فجوات كبيرة.</p>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
 </body>
 </html>
