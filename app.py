@@ -40,18 +40,22 @@ class SmartQuietRadar:
                     "status": f.get('PublicRemark', {}).get('Code', '').upper()
                 })
             
-            # ترتيب الرحلات زمنياً لضمان دقة تحليل الفجوات
             all_flights.sort(key=lambda x: x['time'])
 
-            # 1. تحليل ساعة الذروة
+            # 1. تحليل ساعة الذروة بتنسيق 12 ساعة
             hourly_counts = Counter(f['time'].hour for f in all_flights)
-            peak_hour = max(hourly_counts, key=hourly_counts.get)
+            peak_hour_24 = max(hourly_counts, key=hourly_counts.get)
+            
+            # تحويل ساعة الذروة لنسق 12 ساعة
+            peak_start_12 = datetime.strptime(f"{peak_hour_24}", "%H").strftime("%I:%M %p")
+            peak_end_12 = datetime.strptime(f"{(peak_hour_24+1)%24}", "%H").strftime("%I:%M %p")
+
             peak_info = {
-                "range": f"{peak_hour:02d}:00 - {peak_hour+1:02d}:00",
-                "count": hourly_counts[peak_hour]
+                "range": f"{peak_start_12} - {peak_end_12}",
+                "count": hourly_counts[peak_hour_24]
             }
 
-            # 2. تحليل أوقات عدم وجود رحلات (المرتبة زمنياً)
+            # 2. تحليل أوقات عدم وجود رحلات بتنسيق 12 ساعة
             waiting_times = [f['time'] for f in all_flights if f['status'] not in ['ARR', 'DLV', 'LND']]
             
             quiet_periods = []
@@ -59,8 +63,8 @@ class SmartQuietRadar:
                 diff = (waiting_times[i+1] - waiting_times[i]).total_seconds() / 60
                 if diff > 15:
                     quiet_periods.append({
-                        "start": waiting_times[i].strftime('%H:%M'),
-                        "end": waiting_times[i+1].strftime('%H:%M'),
+                        "start": waiting_times[i].strftime('%I:%M %p'), # تنسيق 12 ساعة
+                        "end": waiting_times[i+1].strftime('%I:%M %p'),   # تنسيق 12 ساعة
                         "duration": int(diff),
                         "sort_key": waiting_times[i]
                     })
@@ -76,23 +80,23 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>رادار أوقات الراحة الذكي</title>
+    <title>رادار الحركة | 12 ساعة</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css">
     <style>
         :root {
             --bg: #000000;
-            --card-matte: #0d0d0d;
+            --card: #0d0d0d;
             --accent: #00f2ff;
             --peak-gold: #ffcc00;
         }
         body { 
             background-color: var(--bg); 
             color: #ffffff; 
-            font-family: system-ui, -apple-system, sans-serif;
+            font-family: system-ui, sans-serif;
             padding: 15px;
         }
-        .search-container {
-            background-color: var(--card-matte);
+        .search-box {
+            background-color: var(--card);
             border: 1px solid #1a1a1a;
             border-radius: 20px;
             padding: 20px;
@@ -105,9 +109,10 @@ HTML_TEMPLATE = """
             padding: 20px;
             text-align: center;
             margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(255, 204, 0, 0.1);
         }
-        .quiet-item {
-            background-color: var(--card-matte);
+        .quiet-card {
+            background-color: var(--card);
             border-radius: 14px;
             padding: 15px 20px;
             margin-bottom: 12px;
@@ -116,31 +121,33 @@ HTML_TEMPLATE = """
             justify-content: space-between;
             border-right: 4px solid var(--accent);
         }
-        .duration-badge {
-            background: rgba(0, 242, 255, 0.15);
+        .duration-pill {
+            background: rgba(0, 242, 255, 0.1);
             color: var(--accent);
-            padding: 6px 14px;
+            padding: 5px 12px;
             border-radius: 8px;
             font-weight: 800;
-            font-size: 1rem;
+            font-size: 0.9rem;
         }
-        .time-text {
-            font-size: 1.5rem;
+        .time-display {
+            font-size: 1.1rem;
             font-weight: 700;
-            font-family: monospace;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
-        .arrow { color: #444; margin: 0 12px; }
-        .form-label { color: #777; font-size: 0.85rem; margin-bottom: 8px; display: block; }
-        .form-control { background: #000; border: 1px solid #222; color: #fff; border-radius: 12px; padding: 10px; text-align: center; }
-        .btn-update { background: var(--accent); color: #000; font-weight: 900; border-radius: 12px; border: none; padding: 12px; width: 100%; margin-top: 10px; }
+        .arrow { color: #444; font-size: 0.8rem; }
+        .form-label { color: #666; font-size: 0.8rem; margin-bottom: 5px; display: block; }
+        .form-control { background: #000; border: 1px solid #222; color: #fff; border-radius: 10px; text-align: center; }
+        .btn-cyan { background: var(--accent); color: #000; font-weight: 900; border-radius: 12px; border: none; padding: 12px; }
     </style>
 </head>
 <body class="container">
-    <div class="text-center mt-3 mb-4">
-        <h4 class="fw-bold">رادار تحليل الحركة <span style="color: var(--accent);">T1</span></h4>
+    <div class="text-center my-4">
+        <h5 class="fw-bold">رادار الحركة الذكي <span style="color: var(--accent);">T1</span></h5>
     </div>
 
-    <div class="search-container mx-auto" style="max-width: 500px;">
+    <div class="search-box mx-auto" style="max-width: 500px;">
         <form method="POST">
             <div class="row g-2">
                 <div class="col-4">
@@ -148,39 +155,39 @@ HTML_TEMPLATE = """
                     <input type="number" name="day" class="form-control" value="{{ selected_day }}">
                 </div>
                 <div class="col-4">
-                    <label class="form-label">بداية الوقت</label>
+                    <label class="form-label">من (24س)</label>
                     <input type="text" name="start" class="form-control" value="{{ selected_start }}">
                 </div>
                 <div class="col-4">
-                    <label class="form-label">نهاية الوقت</label>
+                    <label class="form-label">إلى (24س)</label>
                     <input type="text" name="end" class="form-control" value="{{ selected_end }}">
                 </div>
             </div>
-            <button type="submit" class="btn btn-update">تحديث البيانات</button>
+            <button type="submit" class="btn btn-cyan w-100 mt-3 shadow-sm">تحديث البيانات</button>
         </form>
     </div>
 
     {% if data %}
     <div class="mx-auto" style="max-width: 500px;">
-        <div class="peak-card shadow">
-            <div style="color: var(--peak-gold); font-size: 0.8rem; font-weight: bold;">ساعة الذروة المتوقعة</div>
-            <div style="font-size: 2rem; font-weight: 900; margin: 5px 0;">{{ data.peak.range }}</div>
-            <div style="color: #888;">الكثافة: <span style="color: #fff; font-size: 1.2rem;">{{ data.peak.count }}</span> رحلات</div>
+        <div class="peak-card">
+            <div style="color: var(--peak-gold); font-size: 0.8rem; font-weight: bold; letter-spacing: 1px;">ساعة الذروة</div>
+            <div style="font-size: 1.6rem; font-weight: 900; margin: 8px 0;">{{ data.peak.range }}</div>
+            <div style="color: #888; font-size: 0.9rem;">إجمالي الرحلات: <span style="color: #fff; font-size: 1.2rem;">{{ data.peak.count }}</span></div>
         </div>
 
-        <div class="text-center text-secondary small mb-3">أوقات لا يوجد بها رحلات (> 15 د)</div>
+        <p class="text-center text-secondary small mb-3">أوقات لا يوجد بها رحلات (> 15 دقيقة)</p>
 
         {% for p in data.quiet %}
-        <div class="quiet-item shadow-sm">
-            <div class="duration-badge">{{ p.duration }} دقيقة</div>
-            <div class="time-text">
+        <div class="quiet-card">
+            <div class="duration-pill">{{ p.duration }} دقيقة</div>
+            <div class="time-display">
                 <span>{{ p.end }}</span>
                 <span class="arrow">◀</span>
                 <span>{{ p.start }}</span>
             </div>
         </div>
         {% else %}
-        <div class="text-center py-5 text-secondary">لا توجد أوقات راحة طويلة حالياً</div>
+        <div class="text-center py-5 text-secondary">لا توجد فترات هدوء طويلة</div>
         {% endfor %}
     </div>
     {% endif %}
@@ -191,15 +198,10 @@ HTML_TEMPLATE = """
 @app.route('/', methods=['GET', 'POST'])
 def index():
     now = datetime.now()
-    # قيم افتراضية تلقائية بناءً على الوقت الحالي
-    current_day = now.day
-    current_hour = now.strftime('%H:00')
-    default_end = "23:59"
-
-    # استخدام القيم المرسلة أو الافتراضية
-    day = request.form.get('day', current_day)
-    start = request.form.get('start', current_hour)
-    end = request.form.get('end', default_end)
+    # قيم افتراضية تلقائية
+    day = request.form.get('day', now.day)
+    start = request.form.get('start', now.strftime('%H:00'))
+    end = request.form.get('end', "23:59")
 
     results = None
     if request.method == 'POST' or request.args.get('auto'):
