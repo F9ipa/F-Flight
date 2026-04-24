@@ -18,13 +18,24 @@ class SmartQuietRadar:
         """تحويل الوقت إلى صيغة 12 ساعة مع ص وم"""
         time_str = dt_obj.strftime('%I:%M')
         suffix = "ص" if dt_obj.hour < 12 else "م"
-        # إزالة الصفر الحشوي في البداية لتكون القراءة أجمل (مثلاً 08 تصبح 8)
         if time_str.startswith('0'):
             time_str = time_str[1:]
         return f"{time_str} {suffix}"
 
+    def parse_input_time(self, time_str):
+        """تحويل مدخلات المستخدم من 12 ساعة إلى 24 ساعة للمعالجة"""
+        try:
+            time_str = time_str.replace('ص', 'AM').replace('م', 'PM').strip()
+            return datetime.strptime(time_str, "%I:%M %p").strftime("%H:%M")
+        except:
+            return time_str # العودة للقيم الافتراضية إذا كان التنسيق 24 ساعة أصلاً
+
     def analyze_data(self, day, start_h, end_h):
         try:
+            # تحويل المدخلات لـ 24 ساعة إذا لزم الأمر قبل إرسال الطلب للـ API
+            start_h = self.parse_input_time(start_h)
+            end_h = self.parse_input_time(end_h)
+            
             now = datetime.now()
             target_date = datetime(now.year, now.month, int(day))
             date_str = target_date.strftime('%Y-%m-%d')
@@ -51,7 +62,6 @@ class SmartQuietRadar:
             
             all_flights.sort(key=lambda x: x['time'])
 
-            # 1. تحليل ساعة الذروة
             hourly_counts = Counter(f['time'].hour for f in all_flights)
             peak_hour_24 = max(hourly_counts, key=hourly_counts.get)
             
@@ -63,7 +73,6 @@ class SmartQuietRadar:
                 "count": hourly_counts[peak_hour_24]
             }
 
-            # 2. تحليل أوقات عدم وجود رحلات
             waiting_times = [f['time'] for f in all_flights if f['status'] not in ['ARR', 'DLV', 'LND']]
             
             quiet_periods = []
@@ -92,8 +101,8 @@ HTML_TEMPLATE = """
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css">
     <style>
         :root {
-            --bg: #000000;
-            --card: #0d0d0d;
+            --bg: #050505;
+            --card: #111111;
             --accent: #00f2ff;
             --peak-gold: #ffcc00;
         }
@@ -107,8 +116,9 @@ HTML_TEMPLATE = """
             background-color: var(--card);
             border: 1px solid #1a1a1a;
             border-radius: 20px;
-            padding: 20px;
+            padding: 25px;
             margin-bottom: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
         .peak-card {
             background: linear-gradient(145deg, #1a1400, #0a0a0a);
@@ -121,7 +131,7 @@ HTML_TEMPLATE = """
         .quiet-card {
             background-color: var(--card);
             border-radius: 14px;
-            padding: 15px 20px;
+            padding: 18px 20px;
             margin-bottom: 12px;
             display: flex;
             align-items: center;
@@ -131,67 +141,90 @@ HTML_TEMPLATE = """
         .duration-badge {
             background: rgba(0, 242, 255, 0.1);
             color: var(--accent);
-            padding: 5px 12px;
+            padding: 6px 14px;
             border-radius: 8px;
             font-weight: 800;
-            font-size: 0.95rem;
         }
-        .time-text {
-            font-size: 1.2rem;
-            font-weight: 700;
+        .time-text { font-size: 1.25rem; font-weight: 700; }
+        .form-label { color: #888; font-size: 0.85rem; margin-bottom: 8px; display: block; font-weight: 600; }
+        .form-control { 
+            background: #000; 
+            border: 1px solid #222; 
+            color: #fff; 
+            border-radius: 12px; 
+            padding: 12px; 
+            text-align: center;
+            font-weight: bold;
         }
-        .arrow { color: #444; margin: 0 10px; font-size: 0.8rem; }
-        .form-label { color: #666; font-size: 0.8rem; margin-bottom: 5px; display: block; }
-        .form-control { background: #000; border: 1px solid #222; color: #fff; border-radius: 10px; text-align: center; }
-        .btn-cyan { background: var(--accent); color: #000; font-weight: 900; border-radius: 12px; border: none; padding: 12px; }
+        .form-control:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px rgba(0, 242, 255, 0.2);
+            background: #000;
+            color: #fff;
+        }
+        .btn-cyan { 
+            background: var(--accent); 
+            color: #000; 
+            font-weight: 900; 
+            border-radius: 14px; 
+            border: none; 
+            padding: 15px; 
+            font-size: 1.1rem;
+            transition: 0.3s;
+        }
+        .btn-cyan:hover { background: #00d8e6; transform: translateY(-2px); }
     </style>
 </head>
 <body class="container">
     <div class="text-center my-4">
-        <h5 class="fw-bold">رادار الحركة <span style="color: var(--accent);">T1</span></h5>
+        <h5 class="fw-bold" style="letter-spacing: 1px;">رادار الحركة <span style="color: var(--accent);">T1</span></h5>
     </div>
 
     <div class="search-box mx-auto" style="max-width: 500px;">
         <form method="POST">
-            <div class="row g-2">
-                <div class="col-4">
-                    <label class="form-label">اليوم</label>
-                    <input type="number" name="day" class="form-control" value="{{ selected_day }}">
-                </div>
-                <div class="col-4">
-                    <label class="form-label">من الساعة</label>
-                    <input type="text" name="start" class="form-control" value="{{ selected_start }}">
-                </div>
-                <div class="col-4">
-                    <label class="form-label">إلى الساعة</label>
-                    <input type="text" name="end" class="form-control" value="{{ selected_end }}">
+            <div class="row g-3">
+                <div class="col-12">
+                    <div class="row g-2">
+                        <div class="col-4">
+                            <label class="form-label">اليوم</label>
+                            <input type="number" name="day" class="form-control" value="{{ selected_day }}">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label">من الساعة</label>
+                            <input type="text" name="start" class="form-control" value="{{ selected_start }}" placeholder="مثلاً: 2:00 م">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label">إلى الساعة</label>
+                            <input type="text" name="end" class="form-control" value="{{ selected_end }}" placeholder="مثلاً: 11:00 م">
+                        </div>
+                    </div>
                 </div>
             </div>
-            <button type="submit" class="btn btn-cyan w-100 mt-3 shadow-sm">تحديث البيانات</button>
+            <button type="submit" class="btn btn-cyan w-100 mt-4 shadow">تحديث البيانات</button>
         </form>
     </div>
 
     {% if data %}
     <div class="mx-auto" style="max-width: 500px;">
         <div class="peak-card shadow">
-            <div style="color: var(--peak-gold); font-size: 0.8rem; font-weight: bold; letter-spacing: 1px;">أوقات الذروة</div>
-            <div style="font-size: 1.8rem; font-weight: 900; margin: 8px 0;">{{ data.peak.range }}</div>
-            <div style="color: #888;">عدد رحلات الذروة: <span style="color: #fff; font-size: 1.3rem;">{{ data.peak.count }}</span></div>
+            <div style="color: var(--peak-gold); font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">أوقات الذروة القصوى</div>
+            <div style="font-size: 2rem; font-weight: 900; margin: 10px 0;">{{ data.peak.range }}</div>
+            <div style="color: #888;">إجمالي الرحلات: <span style="color: #fff; font-size: 1.4rem;">{{ data.peak.count }}</span></div>
         </div>
 
         <p class="text-center text-secondary small mb-3">أوقات لا يوجد بها رحلات (> 15 دقيقة)</p>
 
         {% for p in data.quiet %}
-        <div class="quiet-card">
+        <div class="quiet-card shadow-sm">
             <div class="duration-badge">{{ p.duration }} دقيقة</div>
             <div class="time-text">
                 <span>{{ p.end }}</span>
-                <span class="arrow">◀</span>
+                <span style="color: #333; margin: 0 10px; font-size: 0.9rem;">◀</span>
                 <span>{{ p.start }}</span>
             </div>
         </div>
         {% else %}
-        <div class="text-center py-5 text-secondary">لا توجد فترات راحة طويلة</div>
+        <div class="text-center py-5 text-secondary">لا توجد فترات راحة حالياً</div>
         {% endfor %}
     </div>
     {% endif %}
@@ -202,13 +235,15 @@ HTML_TEMPLATE = """
 @app.route('/', methods=['GET', 'POST'])
 def index():
     now = datetime.now()
-    # قيم افتراضية تلقائية
+    # تحويل الوقت الافتراضي لـ 12 ساعة عند العرض الأول
+    default_start = now.strftime('%I:00 %p').replace('AM', 'ص').replace('PM', 'م')
+    
     day = request.form.get('day', now.day)
-    start = request.form.get('start', now.strftime('%H:00'))
-    end = request.form.get('end', "23:59")
+    start = request.form.get('start', default_start)
+    end = request.form.get('end', "11:59 م")
 
     results = None
-    if request.method == 'POST' or request.args.get('auto'):
+    if request.method == 'POST':
         analyzer = SmartQuietRadar()
         results = analyzer.analyze_data(day, start, end)
     
