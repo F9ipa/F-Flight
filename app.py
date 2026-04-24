@@ -32,40 +32,43 @@ class SmartQuietRadar:
             
             if not data: return None
 
-            flight_times = []
-            hourly_counts = Counter()
-
+            # تحويل البيانات إلى كائنات datetime وفرزها زمنياً
+            all_flights = []
             for f in data:
-                status = f.get('PublicRemark', {}).get('Code', '').upper()
-                # نأخذ جميع رحلات الجدول الزمني لتحليل الذروة
                 dt_raw = f.get('EarlyOrDelayedDateTime').split('+')[0]
-                dt_obj = datetime.fromisoformat(dt_raw)
-                flight_times.append(dt_obj)
-                hourly_counts[dt_obj.hour] += 1
-
-            flight_times.sort()
+                all_flights.append({
+                    "time": datetime.fromisoformat(dt_raw),
+                    "status": f.get('PublicRemark', {}).get('Code', '').upper()
+                })
             
-            # 1. تحديد وقت الذروة
+            # ترتيب الرحلات زمنياً لضمان دقة التحليل
+            all_flights.sort(key=lambda x: x['time'])
+
+            # 1. تحليل ساعة الذروة (بناءً على توزيع الرحلات في النطاق المختار)
+            hourly_counts = Counter(f['time'].hour for f in all_flights)
             peak_hour = max(hourly_counts, key=hourly_counts.get)
             peak_info = {
                 "range": f"{peak_hour:02d}:00 - {peak_hour+1:02d}:00",
                 "count": hourly_counts[peak_hour]
             }
 
-            # 2. تحديد أوقات الراحة (التي لم تصل بعد)
+            # 2. تحليل "أوقات لا يوجد بها رحلات" (مرتبة زمنياً)
+            # نأخذ فقط الرحلات التي لم تصل بعد لحساب أوقات الراحة المستقبلية
+            waiting_times = [f['time'] for f in all_flights if f['status'] not in ['ARR', 'DLV', 'LND']]
+            
             quiet_periods = []
-            # نفحص فقط الرحلات المنتظرة لحساب فترات الهدوء القادمة
-            waiting_times = [t for t, f in zip(flight_times, data) if f.get('PublicRemark', {}).get('Code') not in ['ARR', 'DLV', 'LND']]
-            waiting_times.sort()
-
             for i in range(len(waiting_times) - 1):
                 diff = (waiting_times[i+1] - waiting_times[i]).total_seconds() / 60
                 if diff > 15:
                     quiet_periods.append({
                         "start": waiting_times[i].strftime('%H:%M'),
                         "end": waiting_times[i+1].strftime('%H:%M'),
-                        "duration": int(diff)
+                        "duration": int(diff),
+                        "sort_key": waiting_times[i]
                     })
+            
+            # التأكد من ترتيب أوقات الراحة من الأقرب إلى الأبعد زمنياً
+            quiet_periods.sort(key=lambda x: x['sort_key'])
 
             return {"peak": peak_info, "quiet": quiet_periods}
         except:
@@ -82,10 +85,9 @@ HTML_TEMPLATE = """
     <style>
         :root {
             --bg: #000000;
-            --card: #0d0d0d;
-            --accent: #00f2ff;
-            --peak-bg: #1a1400;
-            --peak-border: #ffcc00;
+            --card-matte: #0a0a0a;
+            --accent-cyan: #00f2ff;
+            --peak-gold: #ffcc00;
         }
         body { 
             background-color: var(--bg); 
@@ -93,87 +95,89 @@ HTML_TEMPLATE = """
             font-family: 'Segoe UI', system-ui, sans-serif;
             padding: 20px;
         }
-        .matte-card {
-            background-color: var(--card);
+        .search-container {
+            background-color: var(--card-matte);
+            border: 1px solid #1a1a1a;
+            border-radius: 16px;
+            padding: 25px;
+            margin-bottom: 30px;
+        }
+        .peak-card {
+            background: linear-gradient(145deg, #1a1400, #0a0a0a);
+            border: 1px solid var(--peak-gold);
+            border-radius: 15px;
+            padding: 20px;
+            text-align: center;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(255, 204, 0, 0.05);
+        }
+        .quiet-item {
+            background-color: var(--card-matte);
             border: 1px solid #1a1a1a;
             border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        .peak-box {
-            background-color: var(--peak-bg);
-            border: 1px solid var(--peak-border);
-            border-radius: 12px;
-            padding: 15px;
-            text-align: center;
-            margin-bottom: 25px;
-        }
-        .peak-title { color: var(--peak-border); font-size: 0.8rem; font-weight: bold; text-transform: uppercase; }
-        .peak-time { font-size: 1.8rem; font-weight: 800; margin: 5px 0; }
-        .peak-count { font-size: 1rem; color: #ffeb99; }
-
-        .quiet-card {
-            background: linear-gradient(90deg, #0d0d0d 0%, #111 100%);
-            border-radius: 10px;
-            padding: 15px 20px;
-            margin-bottom: 10px;
+            padding: 18px 25px;
+            margin-bottom: 12px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            border-right: 4px solid var(--accent);
+            border-right: 4px solid var(--accent-cyan);
         }
-        .duration-pill {
-            background-color: rgba(0, 242, 255, 0.1);
-            color: var(--accent);
-            padding: 4px 12px;
-            border-radius: 6px;
-            font-weight: bold;
-            border: 1px solid rgba(0, 242, 255, 0.2);
+        .duration-text {
+            background: rgba(0, 242, 255, 0.1);
+            color: var(--accent-cyan);
+            padding: 5px 15px;
+            border-radius: 8px;
+            font-weight: 800;
+            font-size: 1.1rem;
         }
-        .time-range { font-size: 1.5rem; font-weight: 600; font-family: monospace; }
-        .arrow { color: #444; margin: 0 15px; }
-        
-        .form-control { background: #000; border: 1px solid #222; color: #fff; }
-        .form-control:focus { background: #000; color: #fff; border-color: var(--accent); box-shadow: none; }
-        .btn-run { background: var(--accent); color: #000; font-weight: 900; border: none; }
-        .label-dim { color: #555; font-size: 0.75rem; margin-bottom: 5px; display: block; }
+        .time-display {
+            font-size: 1.6rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: #f0f0f0;
+        }
+        .arrow-sep { color: #333; margin: 0 15px; font-size: 1rem; }
+        .form-label { color: #555; font-size: 0.8rem; font-weight: bold; margin-bottom: 8px; }
+        .form-control { background: #000; border: 1px solid #222; color: #fff; border-radius: 10px; padding: 12px; }
+        .form-control:focus { border-color: var(--accent-cyan); box-shadow: none; background: #000; color: #fff; }
+        .btn-update { background: var(--accent-cyan); color: #000; font-weight: 900; border-radius: 10px; border: none; padding: 12px; }
     </style>
 </head>
 <body class="container">
-    <div class="text-center mb-4">
-        <h3 style="letter-spacing: 1px;">رادار تحليل الحركة <span style="color: var(--accent);">T1</span></h3>
+    <div class="text-center mb-5">
+        <h2 class="fw-bold">تحليل الحركة الزمنية <span style="color: var(--accent-cyan);">T1</span></h2>
     </div>
 
-    <div class="matte-card mx-auto" style="max-width: 800px;">
-        <form method="POST" class="row g-2 align-items-end">
-            <div class="col-md-3 col-6"><label class="label-dim">اليوم</label><input type="number" name="day" class="form-control" value="{{ current_day }}"></div>
-            <div class="col-md-3 col-6"><label class="label-dim">من</label><input type="text" name="start" class="form-control" value="06:00"></div>
-            <div class="col-md-3 col-6"><label class="label-dim">إلى</label><input type="text" name="end" class="form-control" value="23:59"></div>
-            <div class="col-md-3 col-6"><button type="submit" class="btn btn-run w-100 py-2">تحديث</button></div>
+    <div class="search-container mx-auto" style="max-width: 850px;">
+        <form method="POST" class="row g-3 align-items-end">
+            <div class="col-md-3 col-6"><label class="form-label">اليوم</label><input type="number" name="day" class="form-control" value="{{ current_day }}"></div>
+            <div class="col-md-3 col-6"><label class="form-label">بداية الوقت</label><input type="text" name="start" class="form-control" value="06:00"></div>
+            <div class="col-md-3 col-6"><label class="form-label">نهاية الوقت</label><input type="text" name="end" class="form-control" value="23:59"></div>
+            <div class="col-md-3 col-6"><button type="submit" class="btn btn-update w-100">تحديث البيانات</button></div>
         </form>
     </div>
 
     {% if data %}
-    <div class="mx-auto" style="max-width: 600px;">
-        <div class="peak-box shadow-lg">
-            <div class="peak-title">⚠️ وقت الذروة (أعلى كثافة رحلات)</div>
-            <div class="peak-time">{{ data.peak.range }}</div>
-            <div class="peak-count">عدد الرحلات: <span style="font-size: 1.4rem;">{{ data.peak.count }}</span></div>
+    <div class="mx-auto" style="max-width: 650px;">
+        <div class="peak-card">
+            <div style="color: var(--peak-gold); font-size: 0.9rem; font-weight: bold;">ساعة الذروة القصوى</div>
+            <div style="font-size: 2.2rem; font-weight: 900; margin: 10px 0;">{{ data.peak.range }}</div>
+            <div style="color: #aaa;">كثافة الرحلات: <span style="color: #fff; font-size: 1.5rem;">{{ data.peak.count }}</span> رحلات</div>
         </div>
 
-        <div class="label-dim text-center mb-3">أوقات لا يوجد بها رحلات (> 15 دقيقة)</div>
-        
+        <div class="text-secondary small mb-3 text-center">أوقات لا يوجد بها رحلات (مرتبة زمنياً)</div>
+
         {% for p in data.quiet %}
-        <div class="quiet-card">
-            <div class="duration-pill">{{ p.duration }} دقيقة</div>
-            <div class="time-range">
+        <div class="quiet-item shadow-sm">
+            <div class="duration-text">{{ p.duration }} دقيقة</div>
+            <div class="time-display">
                 <span>{{ p.end }}</span>
-                <span class="arrow">◀</span>
+                <span class="arrow-sep">◀</span>
                 <span>{{ p.start }}</span>
             </div>
         </div>
         {% else %}
-        <p class="text-center text-secondary py-4">لا توجد فترات هدوء طويلة حالياً</p>
+        <div class="text-center py-5 text-secondary">لا توجد فترات راحة تتجاوز 15 دقيقة</div>
         {% endfor %}
     </div>
     {% endif %}
