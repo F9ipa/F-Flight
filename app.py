@@ -38,8 +38,7 @@ class FlightAnalyzer:
             }
             
             response = requests.get(self.url, params=params, headers=self.headers, timeout=10)
-            json_data = response.json()
-            data = json_data.get('value', [])
+            data = response.json().get('value', [])
             
             if not data: return None
 
@@ -47,10 +46,16 @@ class FlightAnalyzer:
             hourly_stats = Counter()
 
             for f in data:
-                # استخراج جهة القدوم بدقة من الـ API
-                origin_info = f.get('OriginAirport', {})
-                # نحاول جلب الاسم العربي، ثم الإنجليزي، ثم الكود الدولي للمطار
-                origin_city = origin_info.get('CityNameAr') or origin_info.get('CityNameEn') or origin_info.get('IATACode') or "غير معروف"
+                # --- المنطق الذكي الجديد لجلب جهة القدوم ---
+                origin_obj = f.get('OriginAirport', {})
+                # نجرب جلب الاسم بالترتيب: مدينة عربي -> مدينة انجليزي -> اسم مطار عربي -> كود المطار
+                origin_city = (
+                    origin_obj.get('CityNameAr') or 
+                    origin_obj.get('CityNameEn') or 
+                    origin_obj.get('AirportNameAr') or 
+                    origin_obj.get('IATACode') or 
+                    "غير معروف"
+                )
                 
                 status_code = f.get('PublicRemark', {}).get('Code', '').upper()
                 dt_raw = f.get('EarlyOrDelayedDateTime').split('+')[0]
@@ -84,7 +89,7 @@ class FlightAnalyzer:
                 "gaps": gaps, "flights": flights_list
             }
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error detail: {e}")
             return "error"
 
 HTML_TEMPLATE = """
@@ -93,72 +98,74 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KAIA Smart Dashboard</title>
+    <title>KAIA Radar - الصالة 1</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root { --bg: #0b0f19; --card: #161c2d; --text: #f1f5f9; --accent: #38bdf8; }
-        body { background-color: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
-        .dashboard-card { background: var(--card); border-radius: 12px; border: 1px solid #2d3748; padding: 1.25rem; }
-        .form-control { background: #0b0f19; border: 1px solid #2d3748; color: white; border-radius: 8px; }
-        .btn-primary { background: var(--accent); border: none; font-weight: 600; }
-        .status-pill { padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; }
-        .table-responsive { border-radius: 12px; border: 1px solid #2d3748; }
-        .table { --bs-table-bg: transparent; color: var(--text); margin-bottom: 0; }
-        .text-info-custom { color: var(--accent); }
+        :root { --bg: #0b0f19; --card: #161c2d; --accent: #38bdf8; }
+        body { background-color: var(--bg); color: #f1f5f9; font-family: 'Segoe UI', sans-serif; }
+        .dashboard-card { background: var(--card); border-radius: 15px; border: 1px solid #2d3748; padding: 1.5rem; }
+        .btn-primary { background: var(--accent); border: none; font-weight: bold; }
+        .status-pill { padding: 4px 12px; border-radius: 50px; font-size: 0.8rem; }
+        .table { color: #cbd5e1; vertical-align: middle; }
+        .text-accent { color: var(--accent); }
+        .table-hover tbody tr:hover { background-color: #1e293b; }
     </style>
 </head>
 <body class="container py-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h4 class="text-info-custom fw-bold"><i class="fa-solid fa-tower-observation me-2"></i> رادار الصالة 1</h4>
-        <div class="small text-secondary">{{ current_time }}</div>
+        <h4 class="text-accent fw-bold"><i class="fa-solid fa-plane-arrival me-2"></i> رادار الرحلات الدولية - T1</h4>
+        <div class="badge bg-dark border border-secondary p-2">{{ current_time }}</div>
     </div>
 
-    <div class="dashboard-card mb-4">
-        <form method="POST" class="row g-2 align-items-end">
-            <div class="col-md-3"><label class="small text-secondary">يوم</label><input type="number" name="day" class="form-control form-control-sm" value="{{ current_day }}"></div>
-            <div class="col-md-3"><label class="small text-secondary">من</label><input type="text" name="start" class="form-control form-control-sm" value="06:00"></div>
-            <div class="col-md-3"><label class="small text-secondary">إلى</label><input type="text" name="end" class="form-control form-control-sm" value="23:59"></div>
-            <div class="col-md-3"><button type="submit" class="btn btn-primary btn-sm w-100">تحديث</button></div>
+    <div class="dashboard-card mb-4 shadow">
+        <form method="POST" class="row g-3 align-items-end">
+            <div class="col-md-3"><label class="small text-secondary mb-1">📅 يوم الاستعلام</label><input type="number" name="day" class="form-control bg-dark text-white border-secondary" value="{{ current_day }}"></div>
+            <div class="col-md-3"><label class="small text-secondary mb-1">🕒 من ساعة</label><input type="text" name="start" class="form-control bg-dark text-white border-secondary" value="06:00"></div>
+            <div class="col-md-3"><label class="small text-secondary mb-1">🕒 إلى ساعة</label><input type="text" name="end" class="form-control bg-dark text-white border-secondary" value="23:59"></div>
+            <div class="col-md-3"><button type="submit" class="btn btn-primary w-100">تحديث الرادار</button></div>
         </form>
     </div>
 
     {% if results %}
     <div class="row g-3 mb-4 text-center">
-        <div class="col-3"><div class="dashboard-card py-2"><div class="small text-secondary">الكل</div><div class="h4 mb-0">{{ results.total }}</div></div></div>
-        <div class="col-3"><div class="dashboard-card py-2"><div class="small text-secondary">منتظرة</div><div class="h4 mb-0 text-warning">{{ results.waiting }}</div></div></div>
-        <div class="col-3"><div class="dashboard-card py-2"><div class="small text-secondary">تأخير</div><div class="h4 mb-0 text-danger">{{ results.delayed }}</div></div></div>
-        <div class="col-3"><div class="dashboard-card py-2"><div class="small text-secondary">ذروة</div><div class="h4 mb-0">{{ results.peak_hour }}</div></div></div>
+        <div class="col-3"><div class="dashboard-card"><div class="text-secondary small">الكل</div><div class="h3 mb-0">{{ results.total }}</div></div></div>
+        <div class="col-3"><div class="dashboard-card"><div class="text-secondary small text-warning">منتظرة</div><div class="h3 mb-0 text-warning">{{ results.waiting }}</div></div></div>
+        <div class="col-3"><div class="dashboard-card"><div class="text-secondary small text-danger">متأخرة</div><div class="h3 mb-0 text-danger">{{ results.delayed }}</div></div></div>
+        <div class="col-3"><div class="dashboard-card"><div class="text-secondary small text-info">الذروة</div><div class="h3 mb-0 text-info">{{ results.peak_hour }}</div></div></div>
     </div>
 
-    <div class="table-responsive bg-card shadow-sm">
-        <table class="table table-hover">
-            <thead class="bg-dark text-secondary small">
-                <tr>
-                    <th class="ps-3">الرحلة</th>
-                    <th>القادمة من</th>
-                    <th>الموعد</th>
-                    <th>الحالة</th>
-                </tr>
-            </thead>
-            <tbody class="small">
-                {% for f in results.flights %}
-                <tr>
-                    <td class="ps-3 fw-bold">{{ f.code }}</td>
-                    <td class="text-info-custom">{{ f.origin }}</td>
-                    <td>{{ f.time }}</td>
-                    <td>
-                        <span class="status-pill 
-                            {% if f.raw_status == 'DEL' %}bg-danger bg-opacity-10 text-danger
-                            {% elif f.raw_status in ['ARR', 'LND', 'DLV'] %}bg-success bg-opacity-10 text-success
-                            {% else %}bg-primary bg-opacity-10 text-info{% endif %}">
-                            {{ f.status }}
-                        </span>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div class="dashboard-card p-0 shadow overflow-hidden">
+        <div class="table-responsive" style="max-height: 600px;">
+            <table class="table table-hover mb-0">
+                <thead class="bg-dark text-secondary small">
+                    <tr>
+                        <th class="ps-4 py-3">الرحلة</th>
+                        <th class="py-3">قادمة من</th>
+                        <th class="py-3">الموعد</th>
+                        <th class="py-3">الحالة</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for f in results.flights %}
+                    <tr style="border-bottom: 1px solid #2d3748;">
+                        <td class="ps-4 fw-bold text-white">{{ f.code }}</td>
+                        <td class="text-accent fw-medium">{{ f.origin }}</td>
+                        <td>{{ f.time }}</td>
+                        <td>
+                            <span class="status-pill 
+                                {% if f.raw_status == 'DEL' %}bg-danger bg-opacity-20 text-danger
+                                {% elif f.raw_status in ['ARR', 'LND', 'DLV'] %}bg-success bg-opacity-20 text-success
+                                {% elif f.raw_status == 'WIL' %}bg-warning bg-opacity-20 text-warning
+                                {% else %}bg-primary bg-opacity-20 text-info{% endif %}">
+                                {{ f.status }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
     {% endif %}
 </body>
